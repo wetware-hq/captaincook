@@ -1,4 +1,9 @@
 # captaincook
+
+<img src="docs/cook.jpg" width="280" alt="Captain Cook">
+
+"I've been shipping since 1770" 🇬🇧🛳️
+
 🪪 Head Engineer of Wetware Sydney
 
 Research-use Telegram bot that folds protein sequences, scores ligand binding, and (with confirm) runs Boltz small-molecule design via **official hosted APIs**:
