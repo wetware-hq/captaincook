@@ -2,7 +2,7 @@
 
 <img src="docs/cook.jpg" width="280" alt="Captain Cook">
 
-"I've been shipping since 1770" 🇬🇧🛳️
+"I've been shipping since 1770" 🇬🇧 🛳️
 
 🪪 Head Engineer of Wetware Sydney
 
