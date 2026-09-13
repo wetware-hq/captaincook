@@ -1,0 +1,14 @@
+# Telegram
+python-telegram-bot==22.5
+
+# Official hosted API SDKs
+esm==3.4.1
+boltz-api==0.50.0
+
+# Config / HTTP helpers
+python-dotenv==1.2.1
+httpx==0.28.1
+
+# Design / result PNG (RDKit grid + Pillow header)
+rdkit==2026.3.6
+Pillow==12.3.0
