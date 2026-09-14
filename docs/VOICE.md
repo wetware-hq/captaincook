@@ -40,5 +40,6 @@ Keep dual physician/patient clarity. Open with what the image shows; close with 
 
 ## Ownership
 
+- **biolang:** README.md hybrid abstract–spec prose (clinician + engineer)  
 - **biostrategist:** VOICE.md + interpret.py caption refresh  
 - **biomodels:** rewrite bot.py / context_card format_card / HELP /start / errors / progress to match; poller restart  

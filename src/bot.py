@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from telegram.ext import (
 
 from .biohub_client import BiohubClient
 from .boltz_client import BoltzClient
+from .bioscreen import Decision, gate, refuse_message
 from .config import (
     load_settings,
     validate_protein_sequence,
@@ -34,6 +36,8 @@ from .context_card import (
     parse_load_text,
     store_card,
 )
+from . import onboard as onboard_mod
+from . import patient_files as patient_files_mod
 from .card_cache import (
     clear_cache,
     file_of_kind,
@@ -52,6 +56,13 @@ from .interpret import interpret_binding, interpret_design, interpret_fold, targ
 from .result_photo import rank_candidates
 from .intent import DEFAULT_N_DESIGNS, MAX_N_DESIGNS, MIN_N_DESIGNS
 from .photo import send_design_photo, send_structure_photo
+from .research_client import ResearchServiceError, search_preprints
+from .research_md import (
+    MSG_FAIL_CLOSED,
+    caption_for,
+    render_research_md,
+    topic_error,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -72,11 +83,20 @@ Commands:
 /design `<protein-sequence> <n>` — The same, requesting n molecules (minimum 10; at most 100).
 /load `<nl>` — Parse a request into a context card. No computation is started.
 /load — Show the current card.
-/load clear — Discard the card and any stored files.
+/load clear — Discard the card, patient biometrics, and patient files.
 /download — Send the structure file, and the design table if present, from the last run on the current card.
 /view — Show the stored photograph and description for this card, if a matching completed run exists. No new computation is started.
 /confirm — Begin a pending design job. The reply is one photograph with a short clinical caption. Files follow via /download.
-/cancel — Discard a pending design job.
+/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note, without clearing saved biometrics or patient files.
+/onboard — Collect patient biometrics (age, sex, weight, height) one question at a time. Values are secrets and are never shown in card dumps.
+/onboard status — Report whether biometrics are complete, without printing values.
+/onboard clear — Delete patient biometric secrets and patient files on this card.
+/note — After /onboard, arm the next message as a patient file on this card. Notes are separate from biometric secrets.
+/note list — Report how many patient files are on this card (count only; contents are not shown).
+/note clear — Clear patient files only. Biometric secrets are unchanged.
+/research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
+
+Patient biometrics are for research context only. The user is responsible for lawful handling of personal data. This bot does not diagnose or give clinical advice from biometrics.
 
 A bare /esm, /boltz, or /design uses the sequence on the loaded card when one is present.
 
@@ -85,6 +105,8 @@ Design jobs require at least ten molecules (about US$0.25) and at most one hundr
 A successful result is one photograph with a short clinical caption. Use /download to retrieve the structure file or the design table.
 
 Sequences must use the standard amino-acid alphabet. Length is capped (default 800 residues).
+
+Every sequence-bearing job is checked by a pre-compute biosecurity screen before any structure or design work begins.
 
 This request class cannot be fulfilled: pathogen design, reverse-genetics, synthesis planning, laboratory protocols, or any attempt to engineer harmful biological agents.
 """
@@ -254,6 +276,56 @@ def _looks_like_refusal_request(text: str) -> bool:
     return any(k in lower for k in REFUSAL_KEYWORDS)
 
 
+
+async def _refuse_if_blocked(message, sequence: str, settings) -> bool:
+    """Run bioscreen.gate; reply locked refuse and return True if REVIEW/BLOCK."""
+    result = gate(
+        sequence,
+        bin_name=getattr(settings, "commec_bin", None),
+        timeout_sec=float(getattr(settings, "commec_timeout_sec", 60)),
+    )
+    if result.decision in (Decision.REVIEW, Decision.BLOCK):
+        logger.info(
+            "bioscreen refuse decision=%s screen=%s alphabet=%s",
+            result.decision.value,
+            result.screen,
+            result.alphabet,
+        )
+        await message.reply_text(refuse_message(result))
+        return True
+    return False
+
+
+async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Europe PMC preprint brief. No bioscreen. No Biohub/Boltz/commec."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    topic = " ".join(context.args or []).strip()
+    err = topic_error(topic)
+    if err:
+        await message.reply_text(err)
+        return
+    try:
+        records = await asyncio.to_thread(search_preprints, topic)
+    except ResearchServiceError:
+        await message.reply_text(MSG_FAIL_CLOSED)
+        return
+    except Exception:  # noqa: BLE001 — fail-closed; never invent cites
+        logger.exception("research search failed")
+        await message.reply_text(MSG_FAIL_CLOSED)
+        return
+    body = render_research_md(topic, records)
+    caption = caption_for(topic, len(records))
+    buf = BytesIO(body.encode("utf-8"))
+    await message.reply_document(
+        document=buf,
+        filename="research-brief.md",
+        caption=caption,
+    )
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
@@ -272,6 +344,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 
+
+def _format_card_for_user(user_data: dict[str, Any]) -> str:
+    card = load_card(user_data)
+    if card is None:
+        return ""
+    return format_card(card, patient=onboard_mod.get_patient(user_data))
+
+
 async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parse NL into a context card. Never starts a GPU / API job."""
     if not await _authorized(update, context):
@@ -284,8 +364,12 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if chat_id is not None:
             drop_session(chat_id)
         clear_cache(context.user_data)
+        onboard_mod.end_onboard(context.user_data)
+        patient_files_mod.end_note(context.user_data)
         if clear_card(context.user_data):
-            await message.reply_text("The context card has been cleared.")
+            await message.reply_text(
+                "The context card, patient biometrics, and patient files have been cleared."
+            )
         else:
             await message.reply_text("No context card is loaded.")
         return
@@ -297,7 +381,7 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "then run a job. For example: /load find me an inhibitor for KRAS G12C GDP covalent"
             )
             return
-        await message.reply_text(format_card(card))
+        await message.reply_text(format_card(card, patient=onboard_mod.get_patient(context.user_data)))
         return
 
     joined = " ".join(args)
@@ -308,8 +392,12 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     card = parse_load_text(joined)
+    if card.sequence:
+        settings = _settings(context)
+        if await _refuse_if_blocked(message, card.sequence, settings):
+            return
     store_card(context.user_data, card)
-    body = format_card(card)
+    body = format_card(card, patient=onboard_mod.get_patient(context.user_data))
     hit = lookup_result(context.user_data, card)
     if hit:
         when = hit.get("at") or (hit.get("last_run") or {}).get("at") or "an earlier run"
@@ -345,6 +433,8 @@ async def cmd_esm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     settings = _settings(context)
+    if await _refuse_if_blocked(message, raw, settings):
+        return
     try:
         sequence = validate_protein_sequence(raw, settings.max_sequence_length)
     except ValueError as exc:
@@ -441,6 +531,8 @@ async def cmd_boltz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 ligand_raw = None
 
     settings = _settings(context)
+    if await _refuse_if_blocked(message, protein_raw, settings):
+        return
 
     try:
         sequence = validate_protein_sequence(protein_raw, settings.max_sequence_length)
@@ -580,8 +672,11 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         n = DEFAULT_N_DESIGNS
 
     settings = _settings(context)
+    raw_seq = "".join(seq_args)
+    if await _refuse_if_blocked(message, raw_seq, settings):
+        return
     try:
-        sequence = validate_protein_sequence("".join(seq_args), settings.max_sequence_length)
+        sequence = validate_protein_sequence(raw_seq, settings.max_sequence_length)
     except ValueError as exc:
         await message.reply_text(
             f"{exc} Please pass an amino-acid sequence, not a gene name. "
@@ -641,6 +736,8 @@ async def _handle_structure_request(
     message = update.effective_message
     assert message is not None
     settings = _settings(context)
+    if await _refuse_if_blocked(message, req.sequence, settings):
+        return
     try:
         sequence = validate_protein_sequence(req.sequence, settings.max_sequence_length)
         smiles = validate_smiles(req.smiles) if req.smiles else None
@@ -714,6 +811,10 @@ async def _handle_design_request(
         return
 
     # Full card + live cost estimate; store pending until /confirm.
+    settings = _settings(context)
+    if await _refuse_if_blocked(message, resolved.sequence, settings):
+        return
+
     client: BoltzClient = context.application.bot_data["boltz"]
     estimate_note = ""
     est_usd: float | None = None
@@ -819,6 +920,10 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     sequence: str = pending["sequence"]
     n_designs: int = pending["n_designs"]
     max_usd: float = pending.get("max_usd", DEFAULT_MAX_USD)
+
+    settings = _settings(context)
+    if await _refuse_if_blocked(message, sequence, settings):
+        return
 
     await message.reply_text(
         f"Small-molecule design has begun for a sequence of {len(sequence)} "
@@ -1059,25 +1164,103 @@ async def cmd_download(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await message.reply_document(document=fh, filename=item["filename"])
 
 
+
+
+async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Append patient files on the card. Separate from biometric secrets. No LM/Discord."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    args = [a.lower() for a in (context.args or [])]
+    if args and args[0] == "clear":
+        await message.reply_text(patient_files_mod.clear_text(context.user_data))
+        return
+    if args and args[0] == "list":
+        await message.reply_text(patient_files_mod.list_text(context.user_data))
+        return
+    if args:
+        await message.reply_text(patient_files_mod.MSG_BAD_OPTION)
+        return
+    await message.reply_text(patient_files_mod.start_note(context.user_data))
+
+
+async def cmd_onboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Collect fixed patient biometrics one field at a time. Research-use secrets."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    args = [a.lower() for a in (context.args or [])]
+    if args and args[0] == "clear":
+        had = onboard_mod.clear_patient(context.user_data)
+        if had:
+            await message.reply_text(
+            "Patient biometric secrets and patient files have been cleared."
+        )
+        else:
+            await message.reply_text("No patient biometrics were on file.")
+        return
+    if args and args[0] == "status":
+        patient = onboard_mod.get_patient(context.user_data)
+        await message.reply_text(onboard_mod.status_text(patient))
+        return
+    if args:
+        await message.reply_text(
+            "Unrecognised /onboard option. Use /onboard, /onboard status, or /onboard clear."
+        )
+        return
+    reply, _field = onboard_mod.start_or_resume(context.user_data)
+    await message.reply_text(reply)
+
+
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
     message = update.effective_message
     assert message is not None
-    if context.user_data.pop(PENDING_DESIGN_KEY, None) is None:
-        await message.reply_text("There is no pending design job to cancel.")
+    ended_onboard = onboard_mod.end_onboard(context.user_data)
+    ended_note = patient_files_mod.end_note(context.user_data)
+    had_design = context.user_data.pop(PENDING_DESIGN_KEY, None) is not None
+    parts: list[str] = []
+    if had_design:
+        parts.append("The pending design job has been cancelled.")
+    if ended_onboard:
+        parts.append(
+            "The onboard questions have been ended. Saved patient biometrics were kept."
+        )
+    if ended_note:
+        parts.append(
+            "The pending note was cancelled. Saved patient files were kept."
+        )
+    if parts:
+        await message.reply_text(" ".join(parts))
         return
-    await message.reply_text("The pending design job has been cancelled.")
+    await message.reply_text("There is nothing to cancel.")
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
-    text = (update.effective_message.text or "") if update.effective_message else ""
-    if _looks_like_refusal_request(text):
-        await update.effective_message.reply_text(REFUSAL_TEXT)
+    message = update.effective_message
+    assert message is not None
+    text = message.text or ""
+    if onboard_mod.is_active(context.user_data):
+        # Plain text answers the current biometric question (before unknown-command).
+        reply = onboard_mod.apply_answer(context.user_data, text)
+        await message.reply_text(reply)
         return
-    await update.effective_message.reply_text(
+    if patient_files_mod.is_armed(context.user_data):
+        reply = patient_files_mod.append_note(context.user_data, text)
+        await message.reply_text(reply)
+        return
+    if patient_files_mod.looks_like_diagnose_from_files_or_biometrics(text):
+        await message.reply_text(patient_files_mod.MSG_REFUSE_LM)
+        return
+    if _looks_like_refusal_request(text):
+        await message.reply_text(REFUSAL_TEXT)
+        return
+    await message.reply_text(
         "That message is not a recognised command. Please send /help for the list of commands."
     )
 
@@ -1125,6 +1308,9 @@ def main() -> None:
     application.add_handler(CommandHandler("download", cmd_download))
     application.add_handler(CommandHandler("confirm", cmd_confirm))
     application.add_handler(CommandHandler("cancel", cmd_cancel))
+    application.add_handler(CommandHandler("onboard", cmd_onboard))
+    application.add_handler(CommandHandler("note", cmd_note))
+    application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     logger.info("Starting long-polling bot (research-use only)…")

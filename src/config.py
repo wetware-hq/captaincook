@@ -24,6 +24,8 @@ class Settings:
     biohub_url: str
     boltz_base_url: str
     max_sequence_length: int
+    commec_bin: str = "commec"
+    commec_timeout_sec: int = 60
     # Model names from live docs (Biohub README / Boltz predictions guide).
     esmfold2_model: str = "esmfold2-fast-2026-05"
     esmc_model: str = "esmc-6b-2024-12"
@@ -59,6 +61,15 @@ def load_settings() -> Settings:
     if max_len < 1:
         raise SystemExit("MAX_SEQUENCE_LENGTH must be >= 1.")
 
+    commec_bin = (os.getenv("COMMEC_BIN") or "commec").strip() or "commec"
+    timeout_raw = (os.getenv("COMMEC_TIMEOUT_SEC") or "60").strip()
+    try:
+        commec_timeout = int(timeout_raw)
+    except ValueError:
+        raise SystemExit("COMMEC_TIMEOUT_SEC must be an integer.") from None
+    if commec_timeout < 1:
+        raise SystemExit("COMMEC_TIMEOUT_SEC must be >= 1.")
+
     return Settings(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         biohub_api_token=_require("BIOHUB_API_TOKEN"),
@@ -67,6 +78,8 @@ def load_settings() -> Settings:
         biohub_url=os.getenv("BIOHUB_URL", "https://biohub.ai").rstrip("/"),
         boltz_base_url=os.getenv("BOLTZ_BASE_URL", "https://api.boltz.bio").rstrip("/"),
         max_sequence_length=max_len,
+        commec_bin=commec_bin,
+        commec_timeout_sec=commec_timeout,
     )
 
 

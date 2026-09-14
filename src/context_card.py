@@ -202,7 +202,7 @@ def parse_load_text(text: str) -> ContextCard:
     )
 
 
-def format_card(card: ContextCard) -> str:
+def format_card(card: ContextCard, patient: dict[str, Any] | None = None) -> str:
     seq = card.sequence or "not yet assigned"
     if card.sequence and len(card.sequence) > 16:
         seq_show = f"{card.sequence[:8]}…{card.sequence[-8:]}"
@@ -258,6 +258,15 @@ def format_card(card: ContextCard) -> str:
             lines.append(
                 "Stored files: " + ", ".join(names) + ". Send /download to retrieve them."
             )
+    if patient is None:
+        patient_line = "Patient: not on file."
+    elif patient.get("complete") and patient.get("age_years") is not None:
+        patient_line = "Patient: on file."
+    elif any(patient.get(k) is not None for k in ("age_years", "sex", "weight_kg", "height_cm")):
+        patient_line = "Patient: incomplete."
+    else:
+        patient_line = "Patient: not on file."
+    lines.append(patient_line)
     lines.extend(
         [
             "Next, send /design, /boltz, or /esm. Send /load clear to discard this card and its stored files.",
@@ -302,10 +311,23 @@ def load_card(user_data: dict[str, Any]) -> ContextCard | None:
 
 
 def store_card(user_data: dict[str, Any], card: ContextCard) -> None:
-    user_data[CONTEXT_CARD_KEY] = card.to_dict()
+    """Persist formal card fields. Preserve patient secrets and patient_files."""
+    existing = user_data.get(CONTEXT_CARD_KEY)
+    patient = None
+    patient_files = None
+    if isinstance(existing, dict):
+        patient = existing.get("patient")
+        patient_files = existing.get("patient_files")
+    data = card.to_dict()
+    if patient is not None:
+        data["patient"] = patient
+    if patient_files is not None:
+        data["patient_files"] = patient_files
+    user_data[CONTEXT_CARD_KEY] = data
 
 
 def clear_card(user_data: dict[str, Any]) -> bool:
+    """Drop the context card, patient secrets, and patient_files."""
     return user_data.pop(CONTEXT_CARD_KEY, None) is not None
 
 
