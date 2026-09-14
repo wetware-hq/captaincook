@@ -30,6 +30,10 @@ class Settings:
     esmfold2_model: str = "esmfold2-fast-2026-05"
     esmc_model: str = "esmc-6b-2024-12"
     boltz_model: str = "boltz-2.1"
+    # Optional /scribe OpenAI-compatible chat completions (fail-closed if URL unset).
+    scribe_llm_url: str = ""
+    scribe_llm_key: str = ""
+    scribe_llm_model: str = ""
 
 
 def _require(name: str) -> str:
@@ -80,6 +84,9 @@ def load_settings() -> Settings:
         max_sequence_length=max_len,
         commec_bin=commec_bin,
         commec_timeout_sec=commec_timeout,
+        scribe_llm_url=(os.getenv("SCRIBE_LLM_URL") or "").strip(),
+        scribe_llm_key=(os.getenv("SCRIBE_LLM_KEY") or "").strip(),
+        scribe_llm_model=(os.getenv("SCRIBE_LLM_MODEL") or "").strip(),
     )
 
 

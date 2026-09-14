@@ -70,6 +70,12 @@ from .evidence_md import (
     question_error,
     render_evidence_md,
 )
+from .scribe_client import (
+    ScribeNotConfiguredError,
+    ScribeServiceError,
+    organise_minutes,
+)
+from . import scribe_md as scribe_md_mod
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -94,7 +100,7 @@ Commands:
 /download — Send the structure file, and the design table if present, from the last run on the current card.
 /view — Show the stored photograph and description for this card, if a matching completed run exists. No new computation is started.
 /confirm — Begin a pending design job. The reply is one photograph with a short clinical caption. Files follow via /download.
-/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note, without clearing saved biometrics or patient files.
+/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note or /scribe, without clearing saved biometrics or patient files.
 /onboard — Collect patient biometrics (age, sex, weight, height) one question at a time. Values are secrets and are never shown in card dumps.
 /onboard status — Report whether biometrics are complete, without printing values.
 /onboard clear — Delete patient biometric secrets and patient files on this card.
@@ -103,6 +109,7 @@ Commands:
 /note clear — Clear patient files only. Biometric secrets are unchanged.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
+/scribe — Arm the next message as meeting notes, or /scribe `<text>` for short text. Returns one organised Markdown minutes document. Unlinked from the context card and patient stores. Research use only; not a clinical or legal record.
 
 Patient biometrics are for research context only. The user is responsible for lawful handling of personal data. This bot does not diagnose or give clinical advice from biometrics.
 
@@ -1205,6 +1212,60 @@ async def cmd_download(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 
+
+async def cmd_scribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Organise meeting notes into Markdown minutes. Unlinked from card/patient/files."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    # Inline text after /scribe, or arm next message when bare.
+    inline = " ".join(context.args or []).strip()
+    if not inline:
+        scribe_md_mod.arm_scribe(context.user_data)
+        await message.reply_text(scribe_md_mod.MSG_ARMED)
+        return
+    await _run_scribe(message, context, inline)
+
+
+async def _run_scribe(message, context: ContextTypes.DEFAULT_TYPE, source: str) -> None:
+    """Fail-closed organise + reply_document. Never reads/writes card or patient stores."""
+    err = scribe_md_mod.source_error(source)
+    if err:
+        await message.reply_text(err)
+        return
+    settings = context.application.bot_data.get("settings") if context.application else None
+    url = getattr(settings, "scribe_llm_url", None) if settings is not None else None
+    key = getattr(settings, "scribe_llm_key", None) if settings is not None else None
+    model = getattr(settings, "scribe_llm_model", None) if settings is not None else None
+    # Prefer settings when present; empty string means fall through to env in client.
+    kwargs = {}
+    if url:
+        kwargs["url"] = url
+    if key:
+        kwargs["api_key"] = key
+    if model:
+        kwargs["model"] = model
+    try:
+        raw = await asyncio.to_thread(organise_minutes, source, **kwargs)
+    except ScribeNotConfiguredError:
+        await message.reply_text(scribe_md_mod.MSG_NOT_CONFIGURED)
+        return
+    except ScribeServiceError:
+        await message.reply_text(scribe_md_mod.MSG_FAIL_CLOSED)
+        return
+    except Exception:  # noqa: BLE001 — fail-closed; never invent minutes
+        logger.exception("scribe organise failed")
+        await message.reply_text(scribe_md_mod.MSG_FAIL_CLOSED)
+        return
+    body = scribe_md_mod.ensure_skeleton(raw)
+    buf = BytesIO(body.encode("utf-8"))
+    await message.reply_document(
+        document=buf,
+        filename="meeting-minutes.md",
+        caption=scribe_md_mod.CAPTION,
+    )
+
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Append patient files on the card. Separate from biometric secrets. No LM/Discord."""
     if not await _authorized(update, context):
@@ -1260,6 +1321,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     assert message is not None
     ended_onboard = onboard_mod.end_onboard(context.user_data)
     ended_note = patient_files_mod.end_note(context.user_data)
+    ended_scribe = scribe_md_mod.end_scribe(context.user_data)
     had_design = context.user_data.pop(PENDING_DESIGN_KEY, None) is not None
     parts: list[str] = []
     if had_design:
@@ -1272,6 +1334,8 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parts.append(
             "The pending note was cancelled. Saved patient files were kept."
         )
+    if ended_scribe:
+        parts.append(scribe_md_mod.MSG_CANCELLED)
     if parts:
         await message.reply_text(" ".join(parts))
         return
@@ -1292,6 +1356,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if patient_files_mod.is_armed(context.user_data):
         reply = patient_files_mod.append_note(context.user_data, text)
         await message.reply_text(reply)
+        return
+    if scribe_md_mod.is_armed(context.user_data):
+        # Priority: onboard > note > scribe armed > generic.
+        scribe_md_mod.end_scribe(context.user_data)
+        await _run_scribe(message, context, text)
         return
     if patient_files_mod.looks_like_diagnose_from_files_or_biometrics(text):
         await message.reply_text(patient_files_mod.MSG_REFUSE_LM)
@@ -1351,6 +1420,7 @@ def main() -> None:
     application.add_handler(CommandHandler("note", cmd_note))
     application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(CommandHandler("evidence", cmd_evidence))
+    application.add_handler(CommandHandler("scribe", cmd_scribe))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     logger.info("Starting long-polling bot (research-use only)…")

@@ -2,11 +2,11 @@
 
 <img src="docs/cook.jpg" width="280" alt="Captain Cook">
 
-Research-use Telegram agent for structure prediction, ligand design, literature briefs, and session-scoped clinical context. Wetware Sydney.
+Research-use Telegram agent for structure prediction, ligand design, literature briefs, meeting minutes, and session-scoped clinical context. Wetware Sydney.
 
 ## Abstract
 
-Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule design use Boltz (`boltz-2.1` and the design API). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. Session biometrics and patient files stay on the Telegram context card and are never sent to language models, research briefs, or Discord in this version. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
+Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule design use Boltz (`boltz-2.1` and the design API). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. `/scribe` organises user-supplied meeting text into structured minutes; it does not read or write the context card, biometric secrets, or patient files. Session biometrics and patient files stay on the Telegram context card and are never sent to language models, research briefs, or Discord in this version. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
 
 ## Agent contract
 
@@ -17,11 +17,12 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief (bioRxiv/medRxiv). `/evidence` → peer-reviewed brief (MEDLINE; preprints excluded). Each returns one Markdown document with Harvard references (≤5). Social (X) signal is deferred. |
+| Minutes | `/scribe` → one structured Markdown meeting-minutes document from user-supplied text. Unlinked from the context card; no biometrics or patient files. Fail-closed if the scribe LLM is unset or down. |
 | Artifacts | mmCIF and design `candidates.csv` remain on the chat context card; `/download` sends them as documents. |
 | Context | `/load` builds a formal card from natural language without GPU use. Bare `/esm`, `/boltz`, and `/design` consume that card. |
 | Biometrics | `/onboard` stores secret age, sex, weight, and height on the card. `/load` shows only Patient: on file or incomplete — never raw values. |
 | Patient files | `/note` appends session notes to `patient_files[]`, separate from biometric secrets. Bodies are not shown in `/load` or list output. |
-| Privacy | Biometric secrets and patient files never enter language-model prompts, `/research` or `/evidence` Markdown, captions, or Discord mirrors in v1. |
+| Privacy | Biometric secrets and patient files never enter language-model prompts, `/research` or `/evidence` Markdown, `/scribe` input, captions, or Discord mirrors in v1. `/scribe` is unlinked and must not invent decisions absent from the source. |
 | Replay | `/view` returns the cached photo and caption when the new card fingerprint matches a prior completed run. Cache is chat-session only and uses no GPU. Fingerprints exclude patient secrets and patient files. |
 | Spend gate | `/design` estimates cost and waits. `/confirm` starts design. `/cancel` aborts. |
 
@@ -51,6 +52,8 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note` | If a patient exists, saves the next message to patient files. |
 | `/note list` | Shows patient-file count only. |
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
+| `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
+| `/scribe <text>` | Organises short text into meeting minutes immediately. |
 
 If image render fails, the caption is still sent as text.
 
@@ -76,6 +79,7 @@ Optional:
 - `TELEGRAM_ALLOWED_USER_ID` — restrict the bot to one Telegram user
 - `COMMEC_BIN` / `COMMEC_TIMEOUT_SEC` — local IBBIS `commec` for DNA/RNA bioscreen (fail-closed if missing)
 - `DISCORD_WEBHOOK_URL` — optional outbound `/research` TLDR mirror (unset = disabled; never echoes the URL)
+- `SCRIBE_LLM_URL` / `SCRIBE_LLM_KEY` / `SCRIBE_LLM_MODEL` — optional OpenAI-compatible chat endpoint for `/scribe` (unset = fail-closed)
 
 Missing required variables cause an immediate, clear exit. Secrets live in process environment (local `.env`); they are never committed and never echoed in chat.
 
@@ -107,7 +111,7 @@ captaincook/
   .env.example
   requirements.txt
   Dockerfile
-  docs/          # FEATURE-*, VOICE.md, COPY-*, TEMPLATE-research.md, REFUSE-bioscreen.md
+  docs/          # FEATURE-*, VOICE.md, COPY-*, TEMPLATE-*.md, REFUSE-bioscreen.md
   src/
     bot.py
     context_card.py    # /load → formal card
@@ -118,6 +122,8 @@ captaincook/
     research_md.py     # Harvard preprint brief
     evidence_client.py # peer-reviewed Europe PMC
     evidence_md.py     # Harvard evidence brief
+    scribe_client.py   # optional LLM for /scribe
+    scribe_md.py       # meeting-minutes render
     onboard.py         # biometric secrets Q&A
     patient_files.py   # /note patient_files[]
     discord_webhook.py # optional outbound /research TLDR
@@ -143,4 +149,4 @@ captaincook/
 
 ## Safety
 
-Sequences use a validated alphabet and a default protein length cap of 800 residues. DNA and RNA requests are gated with `PASS` / `REVIEW` / `BLOCK` before compute; refuse copy never includes scores or internals that teach bypass. Optional user allowlisting is supported. API failures return a short user-facing error without stack traces in chat. Help text and handlers refuse pathogen design, reverse genetics, synthesis planning, wet-lab protocols, and diagnosis or dosing from biometrics or patient files.
+Sequences use a validated alphabet and a default protein length cap of 800 residues. DNA and RNA requests are gated with `PASS` / `REVIEW` / `BLOCK` before compute; refuse copy never includes scores or internals that teach bypass. Optional user allowlisting is supported. API failures return a short user-facing error without stack traces in chat. Help text and handlers refuse pathogen design, reverse genetics, synthesis planning, wet-lab protocols, and diagnosis or dosing from biometrics or patient files. `/scribe` organises only what the source states and does not invent decisions.
