@@ -6,7 +6,7 @@ Research-use Telegram agent for structure prediction, ligand design, literature 
 
 ## Abstract
 
-Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule design use Boltz (`boltz-2.1` and the design API). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a short Markdown literature brief from Europe PMC (bioRxiv and medRxiv), with Harvard references. Session biometrics and patient files stay on the Telegram context card and are never sent to language models, research briefs, or Discord in this version. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
+Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule design use Boltz (`boltz-2.1` and the design API). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. Session biometrics and patient files stay on the Telegram context card and are never sent to language models, research briefs, or Discord in this version. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
 
 ## Agent contract
 
@@ -16,12 +16,12 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Compute | Biohub ([`biohub.ai`](https://biohub.ai/learn/getting-started)) for folding; Boltz ([`api.boltz.bio`](https://api.boltz.bio/docs/)) for structure, binding, and design. |
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. No diagnosis or drug claims. |
-| Literature | `/research` → one Markdown document (findings + Harvard references, ≤5 preprints) via Europe PMC. Social (X) signal is deferred and stated as unavailable. |
+| Literature | `/research` → preprint brief (bioRxiv/medRxiv). `/evidence` → peer-reviewed brief (MEDLINE; preprints excluded). Each returns one Markdown document with Harvard references (≤5). Social (X) signal is deferred. |
 | Artifacts | mmCIF and design `candidates.csv` remain on the chat context card; `/download` sends them as documents. |
 | Context | `/load` builds a formal card from natural language without GPU use. Bare `/esm`, `/boltz`, and `/design` consume that card. |
 | Biometrics | `/onboard` stores secret age, sex, weight, and height on the card. `/load` shows only Patient: on file or incomplete — never raw values. |
 | Patient files | `/note` appends session notes to `patient_files[]`, separate from biometric secrets. Bodies are not shown in `/load` or list output. |
-| Privacy | Biometric secrets and patient files never enter language-model prompts, `/research` Markdown, captions, or Discord mirrors in v1. |
+| Privacy | Biometric secrets and patient files never enter language-model prompts, `/research` or `/evidence` Markdown, captions, or Discord mirrors in v1. |
 | Replay | `/view` returns the cached photo and caption when the new card fingerprint matches a prior completed run. Cache is chat-session only and uses no GPU. Fingerprints exclude patient secrets and patient files. |
 | Spend gate | `/design` estimates cost and waits. `/confirm` starts design. `/cancel` aborts. |
 
@@ -44,6 +44,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/confirm` | Runs the pending design job; returns a ligand-grid photo and caption. |
 | `/cancel` | Aborts the pending design job or stops an active onboard Q&A. |
 | `/research <topic>` | Europe PMC preprint brief → Markdown document with Harvard references (≤5). |
+| `/evidence <question>` | Europe PMC peer-reviewed brief (MEDLINE; preprints excluded) → Markdown with Harvard references (≤5). |
 | `/onboard` | Collects biometric secrets one question at a time. |
 | `/onboard status` | Complete or incomplete — no raw values. |
 | `/onboard clear` | Clears biometric secrets and patient files. |
@@ -114,7 +115,9 @@ captaincook/
     downloads.py       # CIF/CSV stash
     bioscreen.py       # PASS / REVIEW / BLOCK pre-GPU gate
     research_client.py # Europe PMC
-    research_md.py     # Harvard brief render
+    research_md.py     # Harvard preprint brief
+    evidence_client.py # peer-reviewed Europe PMC
+    evidence_md.py     # Harvard evidence brief
     onboard.py         # biometric secrets Q&A
     patient_files.py   # /note patient_files[]
     discord_webhook.py # optional outbound /research TLDR
@@ -134,7 +137,7 @@ captaincook/
 
 **Boltz** (`pip install boltz-api`): `Boltz(base_url="https://api.boltz.bio", api_key=BOLTZ_API_KEY)`. Structure and binding use `predictions.structure_and_binding` with model `boltz-2.1`. See [predictions](https://api.boltz.bio/docs/guides/predictions/) and [authentication](https://api.boltz.bio/docs/guides/authentication/).
 
-**Literature:** Europe PMC search REST only for `/research`. bioRxiv native keyword API and OpenAlex are out of scope for v1.
+**Literature:** Europe PMC search REST for `/research` (preprints) and `/evidence` (peer-reviewed MEDLINE; `NOT SRC:PPR`). bioRxiv native keyword API and OpenAlex are out of scope for v1.
 
 **Bioscreen:** Local open-source IBBIS [`commec`](https://github.com/ibbis-bio/common-mechanism) with MIT [`commec-databases`](https://github.com/ibbis-bio/commec-databases) packs. Sequences are written to a temporary FASTA on the host; nothing is uploaded to IBBIS.
 

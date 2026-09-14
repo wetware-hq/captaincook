@@ -79,6 +79,8 @@ def caption_for(topic: str, n: int) -> str:
 
 
 def render_research_md(topic: str, records: list[Record]) -> str:
+    # DOI lock: drop no-DOI from the rendered list (prefer fewer; never invent DOIs).
+    records = [r for r in records if (r.doi or "").strip()]
     if not records:
         findings = FINDINGS_ZERO
         refs = REFERENCES_ZERO
@@ -95,14 +97,14 @@ def render_research_md(topic: str, records: list[Record]) -> str:
 
 
 def harvard_reference(rec: Record) -> str:
-    """{Family}, {Initials}., {Year}. {Title}. {Server}. {DOI_or_URL}"""
+    """{Family}, {Initials}., {Year}. {Title}. {Server}. https://doi.org/{doi}"""
     authors = _harvard_authors(rec.authors)
     title = rec.title.rstrip()
     if title and not title.endswith("."):
         title_part = f"{title}."
     else:
         title_part = title or "Untitled."
-    loc = _doi_or_url(rec)
+    loc = _doi_required(rec)
     server = rec.server or "preprint"
     if rec.year:
         head = f"{authors}, {rec.year}. {title_part} {server}."
@@ -154,8 +156,18 @@ def _harvard_authors(authors: tuple[Author, ...] | list[Author]) -> str:
 
 
 def _doi_or_url(rec: Record) -> str:
+    """Legacy helper: DOI URL when present, else plain URL. Prefer _doi_required."""
     if rec.doi:
         return _doi_url(rec.doi)
+    return (rec.url or "").strip()
+
+
+def _doi_required(rec: Record) -> str:
+    """Harvard locator: always https://doi.org/{doi} when DOI present. Never invent."""
+    doi = (rec.doi or "").strip()
+    if doi:
+        return _doi_url(doi)
+    # Avoid no-DOI lines; callers should have filtered. Honest URL fallback only.
     return (rec.url or "").strip()
 
 

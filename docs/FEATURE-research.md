@@ -45,6 +45,14 @@ Exact URL params live in `src/research_client.py` — keep one function `search_
 Canonical template, Harvard rules, captions, and refuse strings: **`docs/TEMPLATE-research.md`**.  
 Wire that file as-is. If X later lands, replace only the Social signal line with 0–3 links — never pad.
 
+
+## Citations / DOIs (locked 2026-09-14)
+
+- Harvard reference list at the **bottom** of the Markdown.
+- Every Reference line **must include a DOI** as `https://doi.org/{doi}` when Europe PMC provides one.
+- Prefer selecting the top ≤5 hits that **have DOIs**; do not invent DOIs.
+- If fewer than one DOI-bearing hit remains → honest empty references (no fake cites).
+
 ## Acceptance
 
 1. `/research KRAS G12C covalent inhibitors` → document with ≤5 bioRxiv-ish cites, Harvard list, non-empty findings or honest empty.  

@@ -63,6 +63,13 @@ from .research_md import (
     render_research_md,
     topic_error,
 )
+from .evidence_client import EvidenceServiceError, search_peer_reviewed
+from .evidence_md import (
+    MSG_FAIL_CLOSED as EVIDENCE_MSG_FAIL_CLOSED,
+    caption_for as evidence_caption_for,
+    question_error,
+    render_evidence_md,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -95,6 +102,7 @@ Commands:
 /note list — Report how many patient files are on this card (count only; contents are not shown).
 /note clear — Clear patient files only. Biometric secrets are unchanged.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
+/evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 
 Patient biometrics are for research context only. The user is responsible for lawful handling of personal data. This bot does not diagnose or give clinical advice from biometrics.
 
@@ -322,6 +330,37 @@ async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await message.reply_document(
         document=buf,
         filename="research-brief.md",
+        caption=caption,
+    )
+
+
+async def cmd_evidence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Europe PMC peer-reviewed evidence brief. No bioscreen. No patient secrets in query."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    question = " ".join(context.args or []).strip()
+    err = question_error(question)
+    if err:
+        await message.reply_text(err)
+        return
+    # Privacy lock: never read biometric secrets or patient_files into the query or brief.
+    try:
+        records = await asyncio.to_thread(search_peer_reviewed, question)
+    except EvidenceServiceError:
+        await message.reply_text(EVIDENCE_MSG_FAIL_CLOSED)
+        return
+    except Exception:  # noqa: BLE001 — fail-closed; never invent cites
+        logger.exception("evidence search failed")
+        await message.reply_text(EVIDENCE_MSG_FAIL_CLOSED)
+        return
+    body = render_evidence_md(question, records)
+    caption = evidence_caption_for(question, len(records))
+    buf = BytesIO(body.encode("utf-8"))
+    await message.reply_document(
+        document=buf,
+        filename="evidence-brief.md",
         caption=caption,
     )
 
@@ -1311,6 +1350,7 @@ def main() -> None:
     application.add_handler(CommandHandler("onboard", cmd_onboard))
     application.add_handler(CommandHandler("note", cmd_note))
     application.add_handler(CommandHandler("research", cmd_research))
+    application.add_handler(CommandHandler("evidence", cmd_evidence))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     logger.info("Starting long-polling bot (research-use only)…")

@@ -5,6 +5,9 @@
 **Wire from:** `src/research_*.py` (biomodels)  
 **Hard rules:** no fabricated papers; max five references; no X invent; no score dumps
 
+**Split from `/evidence`:** `/research` is preprint-only (bioRxiv/medRxiv). Peer-reviewed MEDLINE briefs use `/evidence` and `TEMPLATE-evidence.md`.
+
+
 ## Document template
 
 Fill `{…}` only from Europe PMC records or fixed strings below. Do not invent authors, years, titles, or DOIs.

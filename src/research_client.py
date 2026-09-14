@@ -133,7 +133,17 @@ def parse_search_body(raw: bytes | str) -> list[Record]:
         if rec is not None:
             records.append(rec)
 
-    return _sorted_records(records)[:RESULT_CAP]
+    return _sorted_records(_records_with_doi(records))[:RESULT_CAP]
+
+
+def _records_with_doi(records: list[Record]) -> list[Record]:
+    """Keep only records that have a real DOI string. Prefer fewer hits over no-DOI lines."""
+    out: list[Record] = []
+    for rec in records:
+        doi = (rec.doi or "").strip()
+        if doi:
+            out.append(rec)
+    return out
 
 
 def _recency_key(rec: Record) -> tuple[int, str, int]:
