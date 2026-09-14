@@ -20,3 +20,4 @@ session_*/
 boltz-experiments/
 *.png
 !docs/**/*.png
+patient-store/

@@ -76,6 +76,9 @@ from .scribe_client import (
     organise_minutes,
 )
 from . import scribe_md as scribe_md_mod
+from . import history as history_mod
+from . import sorter as sorter_mod
+from . import store as store_mod
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -291,8 +294,52 @@ def _looks_like_refusal_request(text: str) -> bool:
     return any(k in lower for k in REFUSAL_KEYWORDS)
 
 
+def _user_id(update: Update) -> int | None:
+    user = update.effective_user
+    return int(user.id) if user is not None else None
 
-async def _refuse_if_blocked(message, sequence: str, settings) -> bool:
+
+def _patient_id_from_user_data(user_data: dict[str, Any] | None) -> str | None:
+    """Read-only peek at stable patient_id. Never creates/mutates patient or biometrics.
+
+    /evidence /research /scribe must not call onboard.get_patient (privacy lock).
+    """
+    if not user_data:
+        return None
+    from .context_card import CONTEXT_CARD_KEY
+
+    raw = user_data.get(CONTEXT_CARD_KEY)
+    if not isinstance(raw, dict):
+        return None
+    patient = raw.get("patient")
+    if not isinstance(patient, dict):
+        return None
+    pid = patient.get("patient_id")
+    if isinstance(pid, str) and pid.strip():
+        return pid.strip()
+    return None
+
+
+def _safe_emit(user_id: int | None, kind: str, payload: dict[str, Any] | None = None) -> None:
+    """Emit history event; never fail the Telegram reply path."""
+    if user_id is None:
+        return
+    try:
+        history_mod.emit(user_id, kind, payload or {})
+    except Exception:  # noqa: BLE001
+        logger.warning("emit failed kind=%s user=%s", kind, user_id, exc_info=True)
+
+
+
+
+async def _refuse_if_blocked(
+    message,
+    sequence: str,
+    settings,
+    *,
+    user_id: int | None = None,
+    user_data: dict[str, Any] | None = None,
+) -> bool:
     """Run bioscreen.gate; reply locked refuse and return True if REVIEW/BLOCK."""
     result = gate(
         sequence,
@@ -307,6 +354,14 @@ async def _refuse_if_blocked(message, sequence: str, settings) -> bool:
             result.alphabet,
         )
         await message.reply_text(refuse_message(result))
+        _safe_emit(
+            user_id,
+            history_mod.KIND_BIOSECURITY,
+            {
+                "decision": result.decision.value,
+                "patient_id": _patient_id_from_user_data(user_data),
+            },
+        )
         return True
     return False
 
@@ -339,6 +394,16 @@ async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         filename="research-brief.md",
         caption=caption,
     )
+    dois = history_mod.extract_dois(body)
+    _safe_emit(
+        _user_id(update),
+        history_mod.KIND_RESEARCH,
+        {
+            "brief_md": body,
+            "dois": dois,
+            "patient_id": _patient_id_from_user_data(context.user_data),
+        },
+    )
 
 
 async def cmd_evidence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,6 +434,16 @@ async def cmd_evidence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         document=buf,
         filename="evidence-brief.md",
         caption=caption,
+    )
+    dois = history_mod.extract_dois(body)
+    _safe_emit(
+        _user_id(update),
+        history_mod.KIND_EVIDENCE,
+        {
+            "brief_md": body,
+            "dois": dois,
+            "patient_id": _patient_id_from_user_data(context.user_data),
+        },
     )
 
 
@@ -440,7 +515,7 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     card = parse_load_text(joined)
     if card.sequence:
         settings = _settings(context)
-        if await _refuse_if_blocked(message, card.sequence, settings):
+        if await _refuse_if_blocked(message, card.sequence, settings, user_id=_user_id(update), user_data=context.user_data):
             return
     store_card(context.user_data, card)
     body = format_card(card, patient=onboard_mod.get_patient(context.user_data))
@@ -479,7 +554,7 @@ async def cmd_esm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     settings = _settings(context)
-    if await _refuse_if_blocked(message, raw, settings):
+    if await _refuse_if_blocked(message, raw, settings, user_id=_user_id(update), user_data=context.user_data):
         return
     try:
         sequence = validate_protein_sequence(raw, settings.max_sequence_length)
@@ -577,7 +652,7 @@ async def cmd_boltz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 ligand_raw = None
 
     settings = _settings(context)
-    if await _refuse_if_blocked(message, protein_raw, settings):
+    if await _refuse_if_blocked(message, protein_raw, settings, user_id=_user_id(update), user_data=context.user_data):
         return
 
     try:
@@ -719,7 +794,7 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     settings = _settings(context)
     raw_seq = "".join(seq_args)
-    if await _refuse_if_blocked(message, raw_seq, settings):
+    if await _refuse_if_blocked(message, raw_seq, settings, user_id=_user_id(update), user_data=context.user_data):
         return
     try:
         sequence = validate_protein_sequence(raw_seq, settings.max_sequence_length)
@@ -782,7 +857,7 @@ async def _handle_structure_request(
     message = update.effective_message
     assert message is not None
     settings = _settings(context)
-    if await _refuse_if_blocked(message, req.sequence, settings):
+    if await _refuse_if_blocked(message, req.sequence, settings, user_id=_user_id(update), user_data=context.user_data):
         return
     try:
         sequence = validate_protein_sequence(req.sequence, settings.max_sequence_length)
@@ -858,7 +933,7 @@ async def _handle_design_request(
 
     # Full card + live cost estimate; store pending until /confirm.
     settings = _settings(context)
-    if await _refuse_if_blocked(message, resolved.sequence, settings):
+    if await _refuse_if_blocked(message, resolved.sequence, settings, user_id=_user_id(update), user_data=context.user_data):
         return
 
     client: BoltzClient = context.application.bot_data["boltz"]
@@ -968,7 +1043,7 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     max_usd: float = pending.get("max_usd", DEFAULT_MAX_USD)
 
     settings = _settings(context)
-    if await _refuse_if_blocked(message, sequence, settings):
+    if await _refuse_if_blocked(message, sequence, settings, user_id=_user_id(update), user_data=context.user_data):
         return
 
     await message.reply_text(
@@ -1225,10 +1300,16 @@ async def cmd_scribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         scribe_md_mod.arm_scribe(context.user_data)
         await message.reply_text(scribe_md_mod.MSG_ARMED)
         return
-    await _run_scribe(message, context, inline)
+    await _run_scribe(message, context, inline, user_id=_user_id(update))
 
 
-async def _run_scribe(message, context: ContextTypes.DEFAULT_TYPE, source: str) -> None:
+async def _run_scribe(
+    message,
+    context: ContextTypes.DEFAULT_TYPE,
+    source: str,
+    *,
+    user_id: int | None = None,
+) -> None:
     """Fail-closed organise + reply_document. Never reads/writes card or patient stores."""
     err = scribe_md_mod.source_error(source)
     if err:
@@ -1264,6 +1345,16 @@ async def _run_scribe(message, context: ContextTypes.DEFAULT_TYPE, source: str) 
         document=buf,
         filename="meeting-minutes.md",
         caption=scribe_md_mod.CAPTION,
+    )
+    # v1 unlinked → inbox via sorter (no patient minutes).
+    _safe_emit(
+        user_id,
+        history_mod.KIND_SCRIBE,
+        {
+            "minutes_md": body,
+            "linked": False,
+            "patient_id": _patient_id_from_user_data(context.user_data),
+        },
     )
 
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1352,15 +1443,41 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Plain text answers the current biometric question (before unknown-command).
         reply = onboard_mod.apply_answer(context.user_data, text)
         await message.reply_text(reply)
+        patient = onboard_mod.get_patient(context.user_data)
+        if (
+            patient
+            and patient.get("complete")
+            and "complete" in reply.lower()
+            and "values are stored" in reply.lower()
+        ):
+            pid = onboard_mod.ensure_patient_id(patient)
+            onboard_mod.set_patient(context.user_data, patient)
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_ONBOARD,
+                {"patient_id": pid},
+            )
         return
     if patient_files_mod.is_armed(context.user_data):
         reply = patient_files_mod.append_note(context.user_data, text)
         await message.reply_text(reply)
+        if reply.startswith("Note saved"):
+            meta = patient_files_mod.last_note_meta(context.user_data)
+            if meta and meta.get("id"):
+                _safe_emit(
+                    _user_id(update),
+                    history_mod.KIND_NOTE,
+                    {
+                        "note_id": meta["id"],
+                        "ts": meta.get("created_at"),
+                        "patient_id": _patient_id_from_user_data(context.user_data),
+                    },
+                )
         return
     if scribe_md_mod.is_armed(context.user_data):
         # Priority: onboard > note > scribe armed > generic.
         scribe_md_mod.end_scribe(context.user_data)
-        await _run_scribe(message, context, text)
+        await _run_scribe(message, context, text, user_id=_user_id(update))
         return
     if patient_files_mod.looks_like_diagnose_from_files_or_biometrics(text):
         await message.reply_text(patient_files_mod.MSG_REFUSE_LM)
@@ -1394,17 +1511,44 @@ def _safe_unlink(path: Path) -> None:
         pass
 
 
+async def _post_init(application: Application) -> None:
+    stop = asyncio.Event()
+    application.bot_data["sorter_stop"] = stop
+    application.bot_data["sorter_task"] = asyncio.create_task(
+        sorter_mod.run_forever(stop_event=stop),
+        name="history_sorter",
+    )
+    logger.info("history_sorter task scheduled")
+
+
+async def _post_shutdown(application: Application) -> None:
+    stop = application.bot_data.get("sorter_stop")
+    task = application.bot_data.get("sorter_task")
+    if stop is not None:
+        stop.set()
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("history_sorter task stopped")
+
+
 def main() -> None:
     settings = load_settings()
     application = (
         Application.builder()
         .token(settings.telegram_bot_token)
         .concurrent_updates(True)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
         .build()
     )
     application.bot_data["settings"] = settings
     application.bot_data["biohub"] = BiohubClient(settings)
     application.bot_data["boltz"] = BoltzClient(settings)
+    store_mod.STORE_ROOT.mkdir(parents=True, exist_ok=True)
 
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
