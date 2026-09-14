@@ -473,6 +473,11 @@ def _format_card_for_user(user_data: dict[str, Any]) -> str:
     return format_card(card, patient=onboard_mod.get_patient(user_data))
 
 
+SEQUENCE_WITHDRAWN_TEXT = (
+    "`/sequence` has been withdrawn. Please use /load with the same arguments."
+)
+
+
 async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parse NL into a context card. Never starts a GPU / API job."""
     if not await _authorized(update, context):
@@ -529,6 +534,16 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "You may also continue with /esm, /boltz, or /design to run the job again."
         )
     await message.reply_text(body)
+
+
+async def cmd_sequence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Withdrawn alias: one-line stub per COPY-load, then same behaviour as /load."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    await message.reply_text(SEQUENCE_WITHDRAWN_TEXT)
+    await cmd_load(update, context)
 
 
 async def cmd_esm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1556,6 +1571,7 @@ def main() -> None:
     application.add_handler(CommandHandler("boltz", cmd_boltz))
     application.add_handler(CommandHandler("design", cmd_design))
     application.add_handler(CommandHandler("load", cmd_load))
+    application.add_handler(CommandHandler("sequence", cmd_sequence))
     application.add_handler(CommandHandler("view", cmd_view))
     application.add_handler(CommandHandler("download", cmd_download))
     application.add_handler(CommandHandler("confirm", cmd_confirm))

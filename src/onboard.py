@@ -6,6 +6,7 @@ Values are never echoed in status, /load, fingerprints, research md, or Discord.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -55,6 +56,7 @@ def empty_patient() -> dict[str, Any]:
     return {
         "secret": True,
         "complete": False,
+        "patient_id": str(uuid.uuid4()),  # stable id; never echo in status/card
         "age_years": None,
         "sex": None,
         "weight_kg": None,
@@ -89,6 +91,7 @@ def set_patient(user_data: dict[str, Any], patient: dict[str, Any]) -> None:
     patient = dict(patient)
     patient["secret"] = True
     patient["updated_at"] = _now()
+    ensure_patient_id(patient)
     _recompute(patient)
     shell["patient"] = patient
 
@@ -212,6 +215,15 @@ def validate_field(field: str, raw: str) -> tuple[Any | None, str | None]:
         return val, None
 
     return None, "That field is not recognised."
+
+
+def ensure_patient_id(patient: dict[str, Any]) -> str:
+    """Generate uuid once on the patient block; never echo to users."""
+    pid = patient.get("patient_id")
+    if not isinstance(pid, str) or not pid.strip():
+        pid = str(uuid.uuid4())
+        patient["patient_id"] = pid
+    return pid
 
 
 def ensure_patient(user_data: dict[str, Any]) -> dict[str, Any]:
