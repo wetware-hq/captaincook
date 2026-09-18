@@ -2,18 +2,18 @@
 
 <img src="docs/cook.jpg" width="280" alt="Captain Cook">
 
-Research-use Telegram agent for structure prediction, ligand design, literature briefs, meeting minutes, and session-scoped clinical context. Wetware Sydney.
+Research-use Telegram agent for structure prediction, ligand and protein-binder design, literature briefs, meeting minutes, and session-scoped clinical context. Wetware Sydney.
 
 ## Abstract
 
-Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule design use Boltz (`boltz-2.1` and the design API). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. `/scribe` organises user-supplied meeting text into structured minutes; unlinked minutes sit in a user inbox until assigned to a patient. Per patient, a background sorter maintains exactly two core files — `clinic.md` (clinical prose, including peer-reviewed Evidence) and `lab.ipynb` (structures, designs, preprint literature) — plus a `search.json` sidecar for fast DOI and section lookup. Session biometrics stay secret on the card and never appear as raw values in those files, language-model prompts, research briefs, or Discord. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
+Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule (**ligand**) design use Boltz (`boltz-2.1` and the design API). Protein **binder** design uses BindCraft via optional Modal compute-only jobs (fail-closed until configured). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. `/scribe` organises user-supplied meeting text into structured minutes; unlinked minutes sit in a user inbox until assigned to a patient. Per patient, a background sorter maintains exactly two core files — `clinic.md` (clinical prose, including peer-reviewed Evidence) and `lab.ipynb` (structures, designs, preprint literature) — plus a `search.json` sidecar for fast DOI and section lookup. Session biometrics stay secret on the card and never appear as raw values in those files, language-model prompts, research briefs, or Discord. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
 
 ## Agent contract
 
 | Concern | Specification |
 | --- | --- |
 | Channel | Telegram long-polling via `python-telegram-bot` v21+ on Python 3.11+. |
-| Compute | Biohub ([`biohub.ai`](https://biohub.ai/learn/getting-started)) for folding; Boltz ([`api.boltz.bio`](https://api.boltz.bio/docs/)) for structure, binding, and design. |
+| Compute | Biohub ([`biohub.ai`](https://biohub.ai/learn/getting-started)) for folding; Boltz ([`api.boltz.bio`](https://api.boltz.bio/docs/)) for structure, binding, and ligand design; BindCraft (optional Modal GPU) for protein binders. |
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief → Telegram `.md` and `lab.ipynb` literature cell (bioRxiv/medRxiv only; no care-framed route to clinic). `/evidence` → peer-reviewed brief → Telegram `.md` and `clinic.md` `## Evidence` (MEDLINE; preprints excluded). Each brief uses Harvard references (≤5, DOI preferred). Social (X) signal is deferred. |
@@ -22,10 +22,10 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Context | `/load` builds a formal card from natural language without GPU use. Bare `/esm`, `/boltz`, and `/design` consume that card. |
 | Biometrics | `/onboard` stores secret age, sex, weight, and height on the card. `/load` shows only Patient: on file or incomplete — never raw values. |
 | Patient files | `/note` appends session notes to `patient_files[]`, separate from biometric secrets. Bodies are not shown in `/load` or list output. |
-| Patient store | Per patient: `clinic.md` + `lab.ipynb` + `search.json`. Handlers emit events; one background daemon is the sole file writer (DOI-idempotent Evidence upserts; Harvard bottoms never stripped). |
+| Patient store | Per patient: `clinic.md` + `lab.ipynb` + `search.json`. Handlers emit events; one background daemon is the sole file writer (DOI-idempotent Evidence upserts; Harvard bottoms never stripped). Design hits index as `ligand:` or `binder:` in `search.json` and land in `lab.ipynb` only. |
 | Privacy | Biometric secrets never appear as raw values in `clinic.md` / `lab.ipynb`. Secrets and note bodies never enter language-model prompts, lit briefs, or captions. `/scribe` must not invent decisions absent from the source. Discord outbound is optional and **not live** until `DISCORD_WEBHOOK_URL` is set; patient files are never mirrored. |
 | Replay | `/view` returns the cached photo and caption when the new card fingerprint matches a prior completed run. Cache is chat-session only and uses no GPU. Fingerprints exclude patient secrets and patient files. |
-| Spend gate | `/design` estimates cost and waits. `/confirm` starts design. `/cancel` aborts. |
+| Spend gate | `/design ligand` or `/design binder` estimates cost and waits (explicit mode; bare `/design` asks which). `/confirm` starts the pending job. `/cancel` aborts. |
 
 Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 
@@ -37,13 +37,16 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/esm <sequence>` | Biohub ESMFold2 fold; returns photo and caption. |
 | `/boltz <sequence>` | Boltz structure prediction; returns photo and caption. |
 | `/boltz <sequence> <smiles>` | Boltz structure and binding; returns photo and caption. |
-| `/design <sequence>` `[n]` | Queues a design job with cost estimate (API floor 10 molecules ≈ US$0.25; cap 100). Requires `/confirm`. |
+| `/design` | Asks for an explicit mode: `ligand` or `binder`. |
+| `/design ligand` `[n]` | Queues Boltz small-molecule design (API floor 10 molecules ≈ US$0.25; cap 100). Requires `/confirm`. |
+| `/design binder` `[n]` | Queues BindCraft protein-binder design (default 5; cap 20). Requires `/confirm`. Fail-closed until Modal/BindCraft is configured. |
+| `/bind` | Withdrawn stub — use `/design binder`. |
 | `/load <nl>` | Parses intent into a context card without GPU use. |
 | `/load` | Shows the current card (Patient: on file / incomplete only; no secrets or note bodies). |
 | `/load clear` | Clears the card, session cache, stashed files, biometrics, and patient files. |
 | `/view` | Replays the stored photo and caption for a matching completed card. |
-| `/download` | Sends the last-run CIF and, for design, the CSV. |
-| `/confirm` | Runs the pending design job; returns a ligand-grid photo and caption. |
+| `/download` | Sends the last-run CIF and, for ligand design, the CSV (binder FASTA/CIF when available). |
+| `/confirm` | Runs the pending ligand or binder job; returns one photo and a research-use caption. |
 | `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` capture. |
 | `/research <topic>` | Europe PMC preprint brief → Markdown document with Harvard references (≤5). |
 | `/evidence <question>` | Europe PMC peer-reviewed brief (MEDLINE; preprints excluded) → Markdown with Harvard references (≤5). |
@@ -60,12 +63,23 @@ If image render fails, the caption is still sent as text.
 
 ## Design flow
 
-1. Optional: `/load find me an inhibitor for KRAS G12C GDP` builds a card without calling GPU. Bare `/design` then uses the card sequence.
-2. `/design <sequence> [n]` validates input, estimates cost, and stores a pending job. It does not start compute.
+Modes are **explicit**. Bare `/design` asks for `ligand` or `binder` and never auto-guesses.
+
+### Ligand (Boltz)
+
+1. Optional: `/load find me an inhibitor for KRAS G12C GDP` builds a card without calling GPU.
+2. `/design ligand` `[n]` validates input, estimates cost, and stores a pending job. It does not start compute.
 3. The confirm card shows molecule count, estimated cost in US dollars, and the research disclaimer. Reply `/confirm` to spend or `/cancel` to stop.
 4. `/confirm` runs Boltz small-molecule design and returns one RDKit ligand grid with a 3C caption. CIF and CSV remain on the card for `/download`.
 
 Candidates are ranked in silico only. A covalent design request without an explicit bonds payload returns a clear client or API error. Version 1 does not invent warheads.
+
+### Binder (BindCraft)
+
+1. `/load` a target and obtain a structure (for example `/esm` or `/boltz`).
+2. `/design binder` `[n]` shows a confirm card (default N=5, cap 20). Hotspot residues are used only if present on the card; otherwise the run is target-wide and stated as such. Hotspots are not invented.
+3. `/confirm` runs BindCraft on optional Modal compute-only GPU (or local `BINDCRAFT_HOME`). Missing Modal/BindCraft configuration **fail-closes** — no invented binders.
+4. Results sync back to the poller: one photo + research-use caption; artifacts via `/download`; sorter writes `lab.ipynb` and `search.json` under `binder:`. Patient files and biometrics never go to Modal.
 
 ## Credentials
 
@@ -81,6 +95,8 @@ Optional:
 - `COMMEC_BIN` / `COMMEC_TIMEOUT_SEC` — local IBBIS `commec` for DNA/RNA bioscreen (fail-closed if missing)
 - `DISCORD_WEBHOOK_URL` — optional outbound `/research` TLDR mirror only (unset = disabled / **not live**; never echoes the URL; never sends clinic or lab files)
 - `SCRIBE_LLM_URL` / `SCRIBE_LLM_KEY` / `SCRIBE_LLM_MODEL` — optional OpenAI-compatible chat endpoint for `/scribe` (unset = fail-closed)
+- `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` — Modal API tokens for compute-only BindCraft (`/design binder`)
+- `BINDCRAFT_HOME` / `BINDCRAFT_TIMEOUT_SEC` — local BindCraft alternative; unset with Modal missing → binder fail-closed
 
 Missing required variables cause an immediate, clear exit. Secrets live in process environment (local `.env`); they are never committed and never echoed in chat.
 
@@ -151,4 +167,4 @@ captaincook/
 
 ## Safety
 
-Sequences use a validated alphabet and a default protein length cap of 800 residues. DNA and RNA requests are gated with `PASS` / `REVIEW` / `BLOCK` before compute; refuse copy never includes scores or internals that teach bypass. Optional user allowlisting is supported. API failures return a short user-facing error without stack traces in chat. Help text and handlers refuse pathogen design, reverse genetics, synthesis planning, wet-lab protocols, and diagnosis or dosing from biometrics or patient files. `/scribe` organises only what the source states and does not invent decisions.
+Sequences use a validated alphabet and a default protein length cap of 800 residues. DNA and RNA requests are gated with `PASS` / `REVIEW` / `BLOCK` before compute; refuse copy never includes scores or internals that teach bypass. Optional user allowlisting is supported. API failures return a short user-facing error without stack traces in chat. Help text and handlers refuse pathogen design, reverse genetics, synthesis planning, wet-lab protocols, and diagnosis or dosing from biometrics or patient files. `/scribe` organises only what the source states and does not invent decisions. `/design binder` does not invent binders when BindCraft/Modal is unavailable.

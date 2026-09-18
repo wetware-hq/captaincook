@@ -6,6 +6,7 @@ Research-use only. No pathogen design, reverse-genetics, synthesis, or wet-lab f
 from __future__ import annotations
 
 import asyncio
+import uuid
 import logging
 from io import BytesIO
 from pathlib import Path
@@ -54,7 +55,14 @@ from .downloads import (
 )
 from .interpret import interpret_binding, interpret_design, interpret_fold, target_label
 from .result_photo import rank_candidates
-from .intent import DEFAULT_N_DESIGNS, MAX_N_DESIGNS, MIN_N_DESIGNS
+from .intent import (
+    DEFAULT_N_DESIGNS,
+    MAX_N_DESIGNS,
+    MIN_N_DESIGNS,
+    looks_like_aa_sequence,
+)
+from . import bindcraft as bindcraft_mod
+from . import modal_bindcraft as modal_bindcraft_mod
 from .photo import send_design_photo, send_structure_photo
 from .research_client import ResearchServiceError, search_preprints
 from .research_md import (
@@ -95,8 +103,9 @@ Commands:
 /esm `<amino-acid-sequence>` — Biohub ESMFold2 structure prediction. A photograph is attached when rendering succeeds.
 /boltz `<protein-sequence>` — Boltz-2.1 structure prediction.
 /boltz `<protein-sequence> <ligand-smiles>` — Structure prediction together with ligand binding.
-/design `<protein-sequence>` — Small-molecule design. A confirm step follows.
-/design `<protein-sequence> <n>` — The same, requesting n molecules (minimum 10; at most 100).
+/design ligand [n] — Queue Boltz small-molecule design (confirm required).
+/design binder [n] — Queue BindCraft protein-binder design (confirm required).
+/design — Ask which mode: ligand or binder.
 /load `<nl>` — Parse a request into a context card. No computation is started.
 /load — Show the current card.
 /load clear — Discard the card, patient biometrics, and patient files.
@@ -116,7 +125,7 @@ Commands:
 
 Patient biometrics are for research context only. The user is responsible for lawful handling of personal data. This bot does not diagnose or give clinical advice from biometrics.
 
-A bare /esm, /boltz, or /design uses the sequence on the loaded card when one is present.
+A bare /esm or /boltz uses the sequence on the loaded card when one is present. Bare /design asks which mode to use. /design ligand uses the card sequence when one is present.
 
 Design jobs require at least ten molecules (about US$0.25) and at most one hundred. The confirm card states the estimated cost before any charge. Candidates are computer suggestions only. They are not validated inhibitors, and this bot does not advise synthesis or laboratory work.
 
@@ -149,6 +158,56 @@ DESIGN_DISCLAIMER = (
     "These candidates are for research use only. They are computer suggestions, "
     "not validated inhibitors. This bot does not provide synthesis or laboratory guidance."
 )
+
+# Locked COPY-design.md strings (biolang). Do not paraphrase.
+COPY_DESIGN_MODE_PROMPT = (
+    "Please choose a design mode: /design ligand or /design binder. "
+    "Ligand uses Boltz for small molecules. Binder uses BindCraft for protein binders."
+)
+COPY_BINDCRAFT_NOT_CONFIGURED = (
+    "This request cannot proceed. BindCraft is not configured on this host "
+    "(BINDCRAFT_HOME), so no binder design was started. Ligand design via "
+    "/design ligand remains available if Boltz is configured."
+)
+COPY_MODAL_BINDCRAFT_NOT_DEPLOYED = (
+    "This request cannot proceed. Modal credentials are present, but the "
+    "BindCraft Modal app is not deployed yet (set MODAL_BINDCRAFT_APP and "
+    "deploy modal_app/bindcraft_app.py with GPU image + weights volume). "
+    "No binder design was started. Ligand design via /design ligand remains "
+    "available if Boltz is configured."
+)
+COPY_BINDER_NO_STRUCTURE = (
+    "This request cannot proceed. Binder design needs a context card with a "
+    "target structure. Please /load a target and obtain a structure "
+    "(for example /esm or /boltz), then use /design binder."
+)
+COPY_BIND_STUB = "`/bind` has been withdrawn. Please use /design binder."
+COPY_LIGAND_CONFIRM = (
+    "Pending ligand design (Boltz). Molecules: {n}. Estimated cost: about US${cost}. "
+    "Research use only — in-silico candidates, not validated inhibitors. "
+    "Reply /confirm to spend or /cancel to stop."
+)
+COPY_BINDER_CONFIRM_HOTSPOT = (
+    "Pending binder design (BindCraft). Designs: {n}. Hotspot residues will be "
+    "used as supplied on the card. Research use only — in-silico protein binders, "
+    "not validated therapeutics. Reply /confirm to spend or /cancel to stop."
+)
+COPY_BINDER_CONFIRM_TARGET_WIDE = (
+    "Pending binder design (BindCraft). Designs: {n}. No hotspot was supplied; "
+    "the run is target-wide. Hotspots are not invented. Research use only — "
+    "in-silico protein binders, not validated therapeutics. "
+    "Reply /confirm to spend or /cancel to stop."
+)
+COPY_BINDER_RESULT_CAPTION = (
+    "This image shows ranked in-silico protein binder designs from BindCraft "
+    "for the loaded target. Scores and poses are computational estimates only. "
+    "Research use only; not a validated binder or therapeutic."
+)
+
+# Binder N defaults (BindCraft path; distinct from Boltz ligand floor of 10).
+DEFAULT_BINDER_N = 5
+MIN_BINDER_N = 1
+MAX_BINDER_N = 20
 
 REFUSAL_TEXT = (
     "This request cannot be fulfilled. The bot does not support pathogen design, "
@@ -752,7 +811,7 @@ async def cmd_boltz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _parse_design_n(args: list[str]) -> tuple[list[str], int]:
-    """Split optional trailing molecule count from /design args."""
+    """Split optional trailing molecule count from /design ligand args (Boltz floor)."""
     n = DEFAULT_N_DESIGNS
     seq_args = list(args)
     if seq_args and seq_args[-1].isdigit():
@@ -768,21 +827,59 @@ def _parse_design_n(args: list[str]) -> tuple[list[str], int]:
     return seq_args, n
 
 
-async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Slash command for Boltz small-molecule design. Sequence only — no NL."""
-    if not await _authorized(update, context):
-        return
+def _parse_binder_n(args: list[str]) -> tuple[list[str], int]:
+    """Split optional trailing design count for /design binder (default 5, min 1, cap 20)."""
+    n = DEFAULT_BINDER_N
+    rest = list(args)
+    if rest and rest[-1].isdigit():
+        n = int(rest.pop())
+    elif rest and rest[-1].lower().startswith("n="):
+        raw = rest.pop().split("=", 1)[1]
+        if raw.isdigit():
+            n = int(raw)
+    if n < MIN_BINDER_N:
+        n = MIN_BINDER_N
+    if n > MAX_BINDER_N:
+        n = MAX_BINDER_N
+    return rest, n
+
+
+def _card_has_structure(card) -> bool:
+    """True when the loaded card has a durable CIF from a prior /esm or /boltz run."""
+    if card is None:
+        return False
+    last = card.last_run
+    if not isinstance(last, dict):
+        return False
+    return file_of_kind(last, "cif") is not None
+
+
+def _card_hotspot(card) -> list | None:
+    """Return hotspot residues only if explicitly supplied on the card. Never invent."""
+    if card is None:
+        return None
+    # Explicit optional field only — do not treat pocket_residues as a hotspot.
+    hotspot = getattr(card, "hotspot_residues", None)
+    if hotspot:
+        return hotspot
+    raw = card.last_run if isinstance(card.last_run, dict) else {}
+    hs = raw.get("hotspot_residues") if isinstance(raw, dict) else None
+    if hs:
+        return hs
+    return None
+
+
+async def _queue_ligand_design(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    seq_args: list[str],
+    n: int | None,
+) -> None:
+    """Boltz small-molecule design confirm/cost path (shared by /design ligand and legacy)."""
     message = update.effective_message
     assert message is not None
     card = load_card(context.user_data)
-    args = list(context.args or [])
-    if args and _looks_like_refusal_request(" ".join(args)):
-        await message.reply_text(
-            REFUSAL_TEXT
-        )
-        return
-
-    seq_args, n = _parse_design_n(args) if args else ([], None)
     covalent = False
     pocket = None
     refs = None
@@ -790,9 +887,9 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not seq_args:
         if not (card and card.sequence):
             await message.reply_text(
-                "A protein sequence is required. Please send /design followed by an "
+                "A protein sequence is required. Please send /design ligand followed by an "
                 "amino-acid sequence, or add a molecule count after the sequence. "
-                "You may also /load a target first and then send /design alone. "
+                "You may also /load a target first and then send /design ligand. "
                 f"The default count is {DEFAULT_N_DESIGNS} (the service minimum; about US$0.25). "
                 "Send /confirm to proceed, or /cancel to stop."
             )
@@ -809,7 +906,9 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     settings = _settings(context)
     raw_seq = "".join(seq_args)
-    if await _refuse_if_blocked(message, raw_seq, settings, user_id=_user_id(update), user_data=context.user_data):
+    if await _refuse_if_blocked(
+        message, raw_seq, settings, user_id=_user_id(update), user_data=context.user_data
+    ):
         return
     try:
         sequence = validate_protein_sequence(raw_seq, settings.max_sequence_length)
@@ -817,7 +916,7 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text(
             f"{exc} Please pass an amino-acid sequence, not a gene name. "
             "You may also /load a curated target such as KRAS first. "
-            "Example: /design MKTIIALSYIFCLVFA"
+            "Example: /design ligand MKTIIALSYIFCLVFA"
         )
         return
 
@@ -826,12 +925,6 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         est = await asyncio.to_thread(client.estimate_design_cost, sequence, n)
         est_usd = float(est.estimated_cost_usd)
         n_used = int(est.num_molecules)
-        clamp = ""
-        if est.clamped_from is not None:
-            clamp = (
-                f"; {est.clamped_from} were requested, and the service minimum "
-                f"of {n_used} will be used"
-            )
     except Exception as exc:  # noqa: BLE001
         await message.reply_text(
             "The cost estimate could not be obtained. "
@@ -840,6 +933,7 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     context.user_data[PENDING_DESIGN_KEY] = {
+        "mode": "ligand",
         "sequence": sequence,
         "n_designs": n_used,
         "max_usd": max_usd,
@@ -848,20 +942,108 @@ async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "pocket_residues": pocket,
         "reference_ligands": refs,
     }
-    await message.reply_text(
-        "Small-molecule design has been prepared and has not yet started.\n"
-        f"The sequence comprises {len(sequence)} amino acids "
-        f"({sequence[:10]}…{sequence[-10:]}).\n"
-        f"The job will request {n_used} molecules{clamp}.\n"
-        f"The estimated cost is US${est_usd:.4f}.\n"
-        f"The spending cap is US${max_usd:.2f}.\n"
-        "The chemical space is enamine_real.\n"
-        "About fifteen minutes may be required for ten molecules. "
-        "Scores are computed only.\n"
-        "\n"
-        "Send /confirm to begin, or /cancel to discard this plan.\n"
-        f"{DESIGN_DISCLAIMER}"
-    )
+    cost_s = f"{est_usd:.2f}"
+    await message.reply_text(COPY_LIGAND_CONFIRM.format(n=n_used, cost=cost_s))
+
+
+async def _queue_binder_design(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    n: int,
+) -> None:
+    """BindCraft path: fail-closed without BINDCRAFT_HOME; else card+structure confirm."""
+    message = update.effective_message
+    assert message is not None
+    settings = _settings(context)
+    home = getattr(settings, "bindcraft_home", "") or ""
+    # Fail-closed until local BINDCRAFT_HOME *or* Modal creds (compute-only; no PHI on Modal).
+    if not bindcraft_mod.binder_compute_ready(
+        home,
+        modal_token_id=getattr(settings, "modal_token_id", "") or "",
+        modal_token_secret=getattr(settings, "modal_token_secret", "") or "",
+    ):
+        await message.reply_text(COPY_BINDCRAFT_NOT_CONFIGURED)
+        return
+
+    card = load_card(context.user_data)
+    if card is None or not _card_has_structure(card):
+        await message.reply_text(COPY_BINDER_NO_STRUCTURE)
+        return
+
+    hotspot = _card_hotspot(card)
+    cif = file_of_kind(card.last_run or {}, "cif")
+    context.user_data[PENDING_DESIGN_KEY] = {
+        "mode": "binder",
+        "n_designs": n,
+        "structure_path": str(cif) if cif else None,
+        "hotspot_residues": hotspot,
+        "sequence": card.sequence,  # for bioscreen on confirm if present
+    }
+    if hotspot:
+        await message.reply_text(COPY_BINDER_CONFIRM_HOTSPOT.format(n=n))
+    else:
+        await message.reply_text(COPY_BINDER_CONFIRM_TARGET_WIDE.format(n=n))
+
+
+async def cmd_design(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dual-mode /design: ligand (Boltz) · binder (BindCraft). Never auto-guess mode."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    args = list(context.args or [])
+    if args and _looks_like_refusal_request(" ".join(args)):
+        await message.reply_text(REFUSAL_TEXT)
+        return
+
+    # Bare /design → mode prompt (no GPU). Also when args are neither mode nor sequence.
+    if not args:
+        await message.reply_text(COPY_DESIGN_MODE_PROMPT)
+        return
+
+    mode0 = args[0].lower()
+    if mode0 == "ligand":
+        rest = args[1:]
+        seq_args, n = _parse_design_n(rest) if rest else ([], None)
+        # _parse_design_n with empty rest isn't called; bare ligand → card / prompt
+        if not rest:
+            seq_args, n = [], None
+        else:
+            seq_args, n = _parse_design_n(rest)
+        await _queue_ligand_design(update, context, seq_args=seq_args, n=n)
+        return
+
+    if mode0 == "binder":
+        rest = args[1:]
+        _ignored, n = _parse_binder_n(rest) if rest else ([], DEFAULT_BINDER_N)
+        if not rest:
+            n = DEFAULT_BINDER_N
+        else:
+            _ignored, n = _parse_binder_n(rest)
+        await _queue_binder_design(update, context, n=n)
+        return
+
+    # Legacy: /design <seq> [n] — treat as ligand if first token looks like AA sequence.
+    joined = "".join(args)
+    # If last token is a count, check the sequence portion.
+    seq_probe_args, _n_probe = _parse_design_n(args)
+    probe = "".join(seq_probe_args) if seq_probe_args else joined
+    if seq_probe_args and looks_like_aa_sequence(probe, min_len=1):
+        seq_args, n = _parse_design_n(args)
+        await _queue_ligand_design(update, context, seq_args=seq_args, n=n)
+        return
+
+    await message.reply_text(COPY_DESIGN_MODE_PROMPT)
+
+
+async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Withdrawn standalone /bind — point users at /design binder."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    await message.reply_text(COPY_BIND_STUB)
 
 
 async def _handle_structure_request(
@@ -1051,6 +1233,79 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await message.reply_text(
             "There is nothing to confirm. Please begin with /design, or /load and then /design."
         )
+        return
+
+    mode = str(pending.get("mode") or "ligand")
+    if mode == "binder":
+        # Shared pending slot with ligand. Fail-closed — never invent binders.
+        # Modal = GPU compute only; payload is target seq/CIF + hotspot + N (no PHI).
+        context.user_data.pop(PENDING_DESIGN_KEY, None)
+        settings = _settings(context)
+        home = getattr(settings, "bindcraft_home", "") or ""
+        seq = pending.get("sequence") or ""
+        if seq and await _refuse_if_blocked(
+            message, seq, settings, user_id=_user_id(update), user_data=context.user_data
+        ):
+            return
+        n_designs = int(pending.get("n_designs") or DEFAULT_BINDER_N)
+        structure = (
+            Path(pending["structure_path"])
+            if pending.get("structure_path")
+            else None
+        )
+        try:
+            result = await asyncio.to_thread(
+                bindcraft_mod.run_binder_design,
+                structure_path=structure,
+                n_designs=n_designs,
+                hotspot=pending.get("hotspot_residues"),
+                home=home,
+                timeout_sec=int(getattr(settings, "bindcraft_timeout_sec", 3600) or 3600),
+                target_sequence=seq or None,
+                modal_token_id=getattr(settings, "modal_token_id", "") or "",
+                modal_token_secret=getattr(settings, "modal_token_secret", "") or "",
+                modal_bindcraft_app=getattr(settings, "modal_bindcraft_app", "") or "",
+            )
+        except modal_bindcraft_mod.ModalBindCraftError as exc:
+            if getattr(exc, "kind", "") == "not_deployed":
+                await message.reply_text(COPY_MODAL_BINDCRAFT_NOT_DEPLOYED)
+            else:
+                await message.reply_text(COPY_BINDCRAFT_NOT_CONFIGURED)
+            return
+        except Exception:
+            await message.reply_text(COPY_BINDCRAFT_NOT_CONFIGURED)
+            return
+
+        # Real result only — sync artifacts to last_run + sorter binder:<design-id>.
+        design_id = result.run_id or uuid.uuid4().hex[:12]
+        artifact_paths: list[str] = list(result.artifact_paths or [])
+        card = load_card(context.user_data)
+        files_meta: list[dict[str, Any]] = []
+        if card is not None and artifact_paths:
+            for ap in artifact_paths:
+                p = Path(ap)
+                if p.is_file():
+                    kind = "fasta" if p.suffix.lower() in {".fasta", ".fa"} else "cif"
+                    files_meta.append({"kind": kind, "path": str(p), "name": p.name})
+            await _persist_interpretation(
+                context,
+                COPY_BINDER_RESULT_CAPTION,
+                kind="binder_design",
+                metrics={"n": len(result.designs), "source": result.source},
+                run_id=design_id,
+                files=files_meta or None,
+            )
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_DESIGN,
+            {
+                "mode": "binder",
+                "design_id": design_id,
+                "patient_id": _patient_id_from_user_data(context.user_data),
+                "artifact_paths": artifact_paths,
+            },
+        )
+        await message.reply_text(COPY_BINDER_RESULT_CAPTION)
         return
 
     sequence: str = pending["sequence"]
@@ -1570,6 +1825,7 @@ def main() -> None:
     application.add_handler(CommandHandler("esm", cmd_esm))
     application.add_handler(CommandHandler("boltz", cmd_boltz))
     application.add_handler(CommandHandler("design", cmd_design))
+    application.add_handler(CommandHandler("bind", cmd_bind))
     application.add_handler(CommandHandler("load", cmd_load))
     application.add_handler(CommandHandler("sequence", cmd_sequence))
     application.add_handler(CommandHandler("view", cmd_view))

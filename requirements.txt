@@ -12,3 +12,6 @@ httpx==0.28.1
 # Design / result PNG (RDKit grid + Pillow header)
 rdkit==2026.3.6
 Pillow==12.3.0
+
+# Optional: Modal GPU client for /design binder (lazy-imported)
+# modal>=0.64

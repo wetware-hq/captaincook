@@ -543,11 +543,26 @@ def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
         )
     elif kind in (history.KIND_DESIGN, history.KIND_CONFIRM):
         assert patient_id
+        # TODO(design-namespace): when design events are emitted, key search.json
+        # entries with ligand:<design-id> / binder:<design-id> prefixes. Binder
+        # refuse paths must not write fake lab cells.
+        mode = str(payload.get("mode") or "ligand")
+        title = (
+            "Protein-binder design"
+            if mode == "binder"
+            else "Small-molecule design"
+        )
+        # Prefer namespaced tag when design_id present; otherwise keep kind tag.
+        design_id = payload.get("design_id")
+        if design_id:
+            tag = f"{mode}:{design_id}"
+        else:
+            tag = f"{mode}:{kind}"
         apply_lab_stub(
             user_id,
             patient_id,
-            tag=str(kind),
-            title="Small-molecule design",
+            tag=tag,
+            title=title,
             artifact_paths=list(payload.get("artifact_paths") or []),
         )
     else:

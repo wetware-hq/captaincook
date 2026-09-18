@@ -34,6 +34,13 @@ class Settings:
     scribe_llm_url: str = ""
     scribe_llm_key: str = ""
     scribe_llm_model: str = ""
+    # Optional BindCraft (/design binder). Fail-closed if unset or missing.
+    bindcraft_home: str = ""
+    bindcraft_timeout_sec: int = 3600
+    # Optional Modal compute for /design binder (GPU only; no PHI on Modal).
+    modal_token_id: str = ""
+    modal_token_secret: str = ""
+    modal_bindcraft_app: str = ""
 
 
 def _require(name: str) -> str:
@@ -74,6 +81,14 @@ def load_settings() -> Settings:
     if commec_timeout < 1:
         raise SystemExit("COMMEC_TIMEOUT_SEC must be >= 1.")
 
+    bc_timeout_raw = (os.getenv("BINDCRAFT_TIMEOUT_SEC") or "3600").strip()
+    try:
+        bc_timeout = int(bc_timeout_raw)
+    except ValueError:
+        raise SystemExit("BINDCRAFT_TIMEOUT_SEC must be an integer.") from None
+    if bc_timeout < 1:
+        raise SystemExit("BINDCRAFT_TIMEOUT_SEC must be >= 1.")
+
     return Settings(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         biohub_api_token=_require("BIOHUB_API_TOKEN"),
@@ -87,6 +102,11 @@ def load_settings() -> Settings:
         scribe_llm_url=(os.getenv("SCRIBE_LLM_URL") or "").strip(),
         scribe_llm_key=(os.getenv("SCRIBE_LLM_KEY") or "").strip(),
         scribe_llm_model=(os.getenv("SCRIBE_LLM_MODEL") or "").strip(),
+        bindcraft_home=(os.getenv("BINDCRAFT_HOME") or "").strip(),
+        bindcraft_timeout_sec=bc_timeout,
+        modal_token_id=(os.getenv("MODAL_TOKEN_ID") or "").strip(),
+        modal_token_secret=(os.getenv("MODAL_TOKEN_SECRET") or "").strip(),
+        modal_bindcraft_app=(os.getenv("MODAL_BINDCRAFT_APP") or "").strip(),
     )
 
 
