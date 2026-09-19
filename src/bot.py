@@ -39,6 +39,7 @@ from .context_card import (
 )
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
+from . import board_md as board_md_mod
 from .card_cache import (
     clear_cache,
     file_of_kind,
@@ -88,6 +89,9 @@ from .evidence_md import (
     question_error,
     render_evidence_md,
 )
+from . import variant_md as variant_md_mod
+from . import trials_md as trials_md_mod
+from .trials_client import TrialsServiceError, search_trials
 from .scribe_client import (
     ScribeNotConfiguredError,
     ScribeServiceError,
@@ -131,6 +135,9 @@ Commands:
 /note clear — Clear patient files only. Biometric secrets are unchanged.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
+/variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
+/board — Assemble a Markdown board packet from the current card and patient stores (case context, evidence, laboratory designs). Research use only; not a clinical record. Specialty-agnostic case conference aid.
+/trials [condition or gene variant] — Shortlist public ClinicalTrials.gov studies for the card or query. Eligibility themes only. Research use only; human review required; this bot does not enroll.
 /scribe — Arm the next message as meeting notes, or /scribe `<text>` for short text. Returns one organised Markdown minutes document. Unlinked from the context card and patient stores. Research use only; not a clinical or legal record.
 
 Patient biometrics are for research context only. The user is responsible for lawful handling of personal data. This bot does not diagnose or give clinical advice from biometrics.
@@ -541,6 +548,131 @@ async def cmd_evidence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "patient_id": _patient_id_from_user_data(context.user_data),
         },
     )
+
+
+
+async def cmd_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gene + change → papers-first MEDLINE brief. Thin wrapper on /evidence. No Discord. No scores."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    card = load_card(context.user_data)
+    card_gene = card.gene if card is not None else None
+    card_variant = card.variant if card is not None else None
+    parsed = variant_md_mod.parse_variant_args(
+        context.args,
+        card_gene=card_gene,
+        card_variant=card_variant,
+    )
+    if parsed is None:
+        await message.reply_text(variant_md_mod.MSG_MISSING)
+        return
+    question = variant_md_mod.evidence_question(parsed.gene, parsed.change)
+    # Privacy lock: never read biometric secrets or patient_files into the query or brief.
+    try:
+        records = await asyncio.to_thread(search_peer_reviewed, question)
+    except EvidenceServiceError:
+        await message.reply_text(variant_md_mod.MSG_FAIL_CLOSED)
+        return
+    except Exception:  # noqa: BLE001 — fail-closed; never invent cites
+        logger.exception("variant search failed")
+        await message.reply_text(variant_md_mod.MSG_FAIL_CLOSED)
+        return
+    body = variant_md_mod.render_variant_md(parsed.gene, parsed.change, records)
+    caption = variant_md_mod.caption_for(parsed.gene, parsed.change)
+    if variant_md_mod.body_is_short(body):
+        await message.reply_text(body)
+    else:
+        buf = BytesIO(body.encode("utf-8"))
+        await message.reply_document(
+            document=buf,
+            filename="variant-brief.md",
+            caption=caption,
+        )
+    dois = history_mod.extract_dois(body)
+    _safe_emit(
+        _user_id(update),
+        history_mod.KIND_EVIDENCE,
+        {
+            "brief_md": body,
+            "dois": dois,
+            "patient_id": _patient_id_from_user_data(context.user_data),
+        },
+    )
+
+
+async def cmd_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Assemble board packet from card + patient stores. No Discord PHI. No clinic auto-file."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    user_data = context.user_data
+    if not board_md_mod.has_board_inputs(user_data):
+        await message.reply_text(board_md_mod.MSG_REFUSE)
+        return
+    uid = _user_id(update)
+    body = board_md_mod.render_board_md(user_data, user_id=uid)
+    buf = BytesIO(body.encode("utf-8"))
+    await message.reply_document(
+        document=buf,
+        filename="board-packet.md",
+        caption=board_md_mod.CAPTION,
+    )
+    # Optional stash path marker on card last_run (ephemeral download; no clinic.md write).
+    try:
+        board_md_mod.stash_board_path_on_card(user_data, "board-packet.md")
+    except Exception:  # noqa: BLE001
+        logger.warning("board last_run stash failed", exc_info=True)
+
+
+
+
+async def cmd_trials(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Public ClinicalTrials.gov shortlist. Fail-closed. No Discord. No biometrics. No enroll language."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    card = load_card(context.user_data)
+    card_gene = card.gene if card is not None else None
+    card_variant = card.variant if card is not None else None
+    # Card has no dedicated condition field in v1; gene/variant themes only from card.
+    card_condition = None
+    parsed = trials_md_mod.parse_trials_args(
+        context.args,
+        card_gene=card_gene,
+        card_variant=card_variant,
+        card_condition=card_condition,
+    )
+    if parsed is None:
+        await message.reply_text(trials_md_mod.MSG_MISSING)
+        return
+    # Privacy lock: never read biometric secrets or patient_files into the query or shortlist.
+    try:
+        studies = await asyncio.to_thread(
+            search_trials, parsed.term, limit=trials_md_mod.clamp_limit()
+        )
+    except TrialsServiceError:
+        await message.reply_text(trials_md_mod.MSG_FAIL_CLOSED)
+        return
+    except Exception:  # noqa: BLE001 — fail-closed; never invent trials
+        logger.exception("trials search failed")
+        await message.reply_text(trials_md_mod.MSG_FAIL_CLOSED)
+        return
+    body = trials_md_mod.render_trials_md(parsed, studies)
+    caption = trials_md_mod.caption_for(len(studies))
+    if trials_md_mod.body_is_short(body):
+        await message.reply_text(body)
+    else:
+        buf = BytesIO(body.encode("utf-8"))
+        await message.reply_document(
+            document=buf,
+            filename="trials-shortlist.md",
+            caption=caption,
+        )
+    # No history emit: sorter has no KIND_TRIALS; board likewise skips emit. Never Discord.
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1944,6 +2076,9 @@ def main() -> None:
     application.add_handler(CommandHandler("note", cmd_note))
     application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(CommandHandler("evidence", cmd_evidence))
+    application.add_handler(CommandHandler("variant", cmd_variant))
+    application.add_handler(CommandHandler("board", cmd_board))
+    application.add_handler(CommandHandler("trials", cmd_trials))
     application.add_handler(CommandHandler("scribe", cmd_scribe))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
