@@ -26,3 +26,10 @@ Ligand design (/design ligand) requires at least ten molecules (about US$0.25) a
 ```
 /trials [condition or gene variant] — Shortlist public ClinicalTrials.gov studies for the card or query. Eligibility themes only. Research use only; human review required; this bot does not enroll.
 ```
+
+## HELP `/board` + `/board update` (locked)
+
+```
+/board — Assemble a Markdown board packet from the current card and patient stores. Research use only; not a clinical record.
+/board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
+```

@@ -17,8 +17,7 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. Binder photos: target default colour, binder accent; N=1 single complex, N>1 grid. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief → Telegram `.md` and `lab.ipynb` literature cell (bioRxiv/medRxiv only; no care-framed route to clinic). `/evidence` → peer-reviewed brief → Telegram `.md` and `clinic.md` `## Evidence` (MEDLINE; preprints excluded). Each brief uses Harvard references (≤5, DOI preferred). Social (X) signal is deferred. |
-| Board / variant / trials | `/board` → case-conference MD packet from session stores. `/variant` → papers-first peer-reviewed gene/variant brief (no FM scores in v1). `/trials` → ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Specialty-agnostic; research-use only. |
-| `/trials` `[condition or gene variant]` | ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Research use only. |
+| Board / variant / trials | `/board` (and `/board update` alias) → case-conference MD packet from session stores. `/variant` → papers-first peer-reviewed gene/variant brief (no FM scores in v1). `/trials` → ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Specialty-agnostic; research-use only. |
 | Minutes | `/scribe` → one structured Markdown meeting-minutes document from user-supplied text. Unlinked by default (user inbox); when linked, the sorter appends under `clinic.md` `## Meeting minutes`. Fail-closed if the scribe LLM is unset or down. |
 | Artifacts | mmCIF and design `candidates.csv` remain on the chat context card; `/download` sends them as documents. |
 | Context | `/load` builds a formal card from natural language without GPU use. Bare `/esm`, `/boltz`, and `/design` consume that card. |
@@ -60,6 +59,10 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
+| `/board` | Assembles a Markdown board packet from the current card and patient stores. |
+| `/board update` | Same as `/board` — fresh snapshot of current stores (not an incremental merge). |
+| `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
+| `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 
 If image render fails, the caption is still sent as text.
 

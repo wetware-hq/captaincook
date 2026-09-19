@@ -288,3 +288,16 @@ class TestHelpMentionsBoard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBoardUpdateAlias(unittest.TestCase):
+    def test_help_lists_board_update(self):
+        from src import bot as bot_mod
+        self.assertIn("/board update", bot_mod.HELP_TEXT)
+        self.assertIn("not an incremental merge", bot_mod.HELP_TEXT)
+
+    def test_feature_doc_alias(self):
+        from pathlib import Path
+        feat = Path("docs/FEATURE-board.md").read_text()
+        self.assertIn("`/board update`", feat)
+        self.assertIn("Strict alias", feat)

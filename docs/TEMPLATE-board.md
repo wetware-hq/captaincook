@@ -84,6 +84,14 @@ No open session gaps were detected from the stores listed above.
 Board packet for this session. Research use only; not a clinical record.
 ```
 
+
+## Commands (HELP)
+
+```
+/board — Assemble a Markdown board packet from the current card and patient stores. Research use only; not a clinical record.
+/board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
+```
+
 ## Refuse
 
 ```

@@ -137,6 +137,7 @@ Commands:
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
 /board — Assemble a Markdown board packet from the current card and patient stores (case context, evidence, laboratory designs). Research use only; not a clinical record. Specialty-agnostic case conference aid.
+/board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
 /trials [condition or gene variant] — Shortlist public ClinicalTrials.gov studies for the card or query. Eligibility themes only. Research use only; human review required; this bot does not enroll.
 /scribe — Arm the next message as meeting notes, or /scribe `<text>` for short text. Returns one organised Markdown minutes document. Unlinked from the context card and patient stores. Research use only; not a clinical or legal record.
 
@@ -603,11 +604,22 @@ async def cmd_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Assemble board packet from card + patient stores. No Discord PHI. No clinic auto-file."""
+    """Assemble board packet from card + patient stores. No Discord PHI. No clinic auto-file.
+
+    `/board update` is a strict alias of `/board` (fresh snapshot; no incremental merge).
+    """
     if not await _authorized(update, context):
         return
     message = update.effective_message
     assert message is not None
+    # Ignore optional "update" arg — same fresh assemble as bare /board.
+    args = [a.lower() for a in (context.args or [])]
+    if args and args != ["update"]:
+        await message.reply_text(
+            "Unknown /board argument. Use /board or /board update "
+            "(same fresh snapshot; not an incremental merge)."
+        )
+        return
     user_data = context.user_data
     if not board_md_mod.has_board_inputs(user_data):
         await message.reply_text(board_md_mod.MSG_REFUSE)

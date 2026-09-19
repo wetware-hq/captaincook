@@ -56,6 +56,7 @@ Assembled from session stores only; nothing inferred beyond listed fields.
 | Command | Behavior |
 | --- | --- |
 | `/board` | Build packet from current card + patient stores |
+| `/board update` | **Strict alias** of `/board` — same fresh snapshot; no incremental merge in v1 |
 | `/board clear` | Not required v1 (packet is ephemeral document) |
 
 ## Store / privacy
