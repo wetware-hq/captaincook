@@ -224,7 +224,12 @@ def parse_load_text(text: str) -> ContextCard:
     )
 
 
-def format_card(card: ContextCard, patient: dict[str, Any] | None = None) -> str:
+def format_card(
+    card: ContextCard,
+    patient: dict[str, Any] | None = None,
+    *,
+    measurements_line: str | None = None,
+) -> str:
     seq = card.sequence or "not yet assigned"
     if card.sequence and len(card.sequence) > 16:
         seq_show = f"{card.sequence[:8]}…{card.sequence[-8:]}"
@@ -297,6 +302,10 @@ def format_card(card: ContextCard, patient: dict[str, Any] | None = None) -> str
     else:
         patient_line = "Patient: not on file."
     lines.append(patient_line)
+    if measurements_line:
+        lines.append(measurements_line)
+    else:
+        lines.append("Measurements: none on file.")
     lines.extend(
         [
             "Next, send /design, /boltz, or /esm. Send /load clear to discard this card and its stored files.",
@@ -341,23 +350,27 @@ def load_card(user_data: dict[str, Any]) -> ContextCard | None:
 
 
 def store_card(user_data: dict[str, Any], card: ContextCard) -> None:
-    """Persist formal card fields. Preserve patient secrets and patient_files."""
+    """Persist formal card fields. Preserve patient secrets, patient_files, measurements."""
     existing = user_data.get(CONTEXT_CARD_KEY)
     patient = None
     patient_files = None
+    measurements = None
     if isinstance(existing, dict):
         patient = existing.get("patient")
         patient_files = existing.get("patient_files")
+        measurements = existing.get("measurements")
     data = card.to_dict()
     if patient is not None:
         data["patient"] = patient
     if patient_files is not None:
         data["patient_files"] = patient_files
+    if measurements is not None:
+        data["measurements"] = measurements
     user_data[CONTEXT_CARD_KEY] = data
 
 
 def clear_card(user_data: dict[str, Any]) -> bool:
-    """Drop the context card, patient secrets, and patient_files."""
+    """Drop the context card, patient secrets, patient_files, and measurements."""
     return user_data.pop(CONTEXT_CARD_KEY, None) is not None
 
 

@@ -1,7 +1,7 @@
 """Assemble /board Markdown packet from session stores.
 
 Verbatim locked strings from docs/TEMPLATE-board.md. Research-use only.
-Never echo biometric secrets or note bodies. Never invent evidence or designs.
+Never echo biometric secrets, note bodies, or secret measure values. Never invent evidence or designs.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Any
 
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
+from . import measure as measure_mod
 from . import store
 from .context_card import CONTEXT_CARD_KEY, ContextCard, load_card
 
@@ -48,6 +49,10 @@ OPEN_NONE_GAPS = (
 CAPTION = (
     "Board packet for this session. Research use only; not a clinical record."
 )
+
+# --- Locked TEMPLATE-measure.md board stubs (verbatim) ---
+BOARD_MEASURE_NONE = "None yet. Paste observations with /measure."
+BOARD_MEASURE_SECRET_STUB = "Secret measures on file: {n} (values not shown)."
 
 MSG_REFUSE = (
     "This request cannot proceed. There is no context card and no patient on "
@@ -86,6 +91,9 @@ def has_board_inputs(user_data: dict[str, Any] | None) -> bool:
         return True
     files = raw.get("patient_files")
     if isinstance(files, list) and files:
+        return True
+    measures = raw.get("measurements")
+    if isinstance(measures, list) and measures:
         return True
     return False
 
@@ -421,6 +429,7 @@ def render_board_md(
         has_designs=bool(designs),
         card=card,
     )
+    measure_block = measure_mod.board_measurements_block(user_data)
 
     return (
         "# Board packet\n"
@@ -433,6 +442,10 @@ def render_board_md(
         f"- Gene / variant: {_gene_variant_line(card)}\n"
         f"- Patient biometrics: {biometrics}\n"
         f"- Patient files: {files_n} on file (contents not shown)\n"
+        "\n"
+        "## Measurements\n"
+        "\n"
+        f"{measure_block}\n"
         "\n"
         "## Evidence\n"
         "\n"

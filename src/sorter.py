@@ -281,6 +281,49 @@ def apply_onboard(user_id: int | str, patient_id: str, _payload: dict[str, Any])
     )
 
 
+
+def apply_measure(user_id: int | str, patient_id: str, payload: dict[str, Any]) -> None:
+    """Index non-secret measure:<key> into search.json. Never stores values."""
+    keys = payload.get("measure_keys") or []
+    if isinstance(keys, str):
+        keys = [keys]
+    keys = [str(k).strip() for k in keys if str(k).strip()]
+    # Single-key form
+    one = payload.get("measure_key")
+    if one:
+        keys.append(str(one).strip())
+    # Dedupe preserve order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for k in keys:
+        if k in seen:
+            continue
+        seen.add(k)
+        ordered.append(k)
+    if not ordered:
+        return
+    store.ensure_patient_files(user_id, patient_id)
+    search = _read_search(user_id, patient_id)
+    entries: list[dict[str, Any]] = list(search.get("entries") or [])
+    # Drop prior measure:<key> entries for keys we are upserting
+    titles = {f"measure:{k}" for k in ordered}
+    kept = [e for e in entries if str(e.get("title") or "") not in titles]
+    for k in ordered:
+        title = f"measure:{k}"
+        kept.append(
+            {
+                "doi": "",
+                "file": store.CLINIC_NAME,
+                "section": "Measurements",
+                "offset": 0,
+                "title": title,
+                "tokens": _light_tokens(title),
+            }
+        )
+    search["entries"] = kept
+    _write_search(user_id, patient_id, search)
+
+
 def apply_note(user_id: int | str, patient_id: str, payload: dict[str, Any]) -> None:
     note_id = str(payload.get("note_id") or "")
     ts = str(payload.get("ts") or _now())
@@ -498,6 +541,7 @@ def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
         history.KIND_RESEARCH,
         history.KIND_ONBOARD,
         history.KIND_NOTE,
+        history.KIND_MEASURE,
         history.KIND_BIOSECURITY,
         history.KIND_ESM,
         history.KIND_BOLTZ,
@@ -520,6 +564,9 @@ def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
     elif kind == history.KIND_NOTE:
         assert patient_id
         apply_note(user_id, patient_id, payload)
+    elif kind == history.KIND_MEASURE:
+        assert patient_id
+        apply_measure(user_id, patient_id, payload)
     elif kind == history.KIND_BIOSECURITY:
         assert patient_id
         apply_bioscreen(user_id, patient_id, payload)

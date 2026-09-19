@@ -39,6 +39,7 @@ from .context_card import (
 )
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
+from . import measure as measure_mod
 from . import board_md as board_md_mod
 from .card_cache import (
     clear_cache,
@@ -126,13 +127,16 @@ Commands:
 /download — Send the structure file, and the design table if present, from the last run on the current card.
 /view — Show the stored photograph and description for this card, if a matching completed run exists. No new computation is started.
 /confirm — Begin a pending ligand or binder design job. The reply is one photograph with a short clinical caption when rendering succeeds. Files follow via /download.
-/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note or /scribe, without clearing saved biometrics or patient files.
+/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note, /measure, or /scribe, without clearing saved biometrics, patient files, or measurements.
 /onboard — Collect patient biometrics (age, sex, weight, height) one question at a time. Values are secrets and are never shown in card dumps.
 /onboard status — Report whether biometrics are complete, without printing values.
 /onboard clear — Delete patient biometric secrets and patient files on this card.
 /note — After /onboard, arm the next message as a patient file on this card. Notes are separate from biometric secrets.
 /note list — Report how many patient files are on this card (count only; contents are not shown).
 /note clear — Clear patient files only. Biometric secrets are unchanged.
+/measure — Paste patient observations onto the current card (HR, BP, weight_kg=…, optional secret). /measure list shows keys; secret values are never shown. Research use only; not a diagnosis.
+/measure list — List keys and counts. Secret measures appear only as a count.
+/measure clear [key|all] — Clear one key series or all measurements on this card.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
@@ -521,7 +525,7 @@ async def cmd_evidence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if err:
         await message.reply_text(err)
         return
-    # Privacy lock: never read biometric secrets or patient_files into the query or brief.
+    # Privacy lock: never read biometric secrets, patient_files, or measurements into the query or brief.
     try:
         records = await asyncio.to_thread(search_peer_reviewed, question)
     except EvidenceServiceError:
@@ -570,7 +574,7 @@ async def cmd_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await message.reply_text(variant_md_mod.MSG_MISSING)
         return
     question = variant_md_mod.evidence_question(parsed.gene, parsed.change)
-    # Privacy lock: never read biometric secrets or patient_files into the query or brief.
+    # Privacy lock: never read biometric secrets, patient_files, or measurements into the query or brief.
     try:
         records = await asyncio.to_thread(search_peer_reviewed, question)
     except EvidenceServiceError:
@@ -661,7 +665,7 @@ async def cmd_trials(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if parsed is None:
         await message.reply_text(trials_md_mod.MSG_MISSING)
         return
-    # Privacy lock: never read biometric secrets or patient_files into the query or shortlist.
+    # Privacy lock: never read biometric secrets, patient_files, or measurements into the query or shortlist.
     try:
         studies = await asyncio.to_thread(
             search_trials, parsed.term, limit=trials_md_mod.clamp_limit()
@@ -710,7 +714,11 @@ def _format_card_for_user(user_data: dict[str, Any]) -> str:
     card = load_card(user_data)
     if card is None:
         return ""
-    return format_card(card, patient=onboard_mod.get_patient(user_data))
+    return format_card(
+        card,
+        patient=onboard_mod.get_patient(user_data),
+        measurements_line=measure_mod.load_dump_line(user_data),
+    )
 
 
 SEQUENCE_WITHDRAWN_TEXT = (
@@ -732,9 +740,10 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         clear_cache(context.user_data)
         onboard_mod.end_onboard(context.user_data)
         patient_files_mod.end_note(context.user_data)
+        measure_mod.end_measure(context.user_data)
         if clear_card(context.user_data):
             await message.reply_text(
-                "The context card, patient biometrics, and patient files have been cleared."
+                "The context card, patient biometrics, patient files, and measurements have been cleared."
             )
         else:
             await message.reply_text("No context card is loaded.")
@@ -747,7 +756,13 @@ async def cmd_load(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "then run a job. For example: /load find me an inhibitor for KRAS G12C GDP covalent"
             )
             return
-        await message.reply_text(format_card(card, patient=onboard_mod.get_patient(context.user_data)))
+        await message.reply_text(
+            format_card(
+                card,
+                patient=onboard_mod.get_patient(context.user_data),
+                measurements_line=measure_mod.load_dump_line(context.user_data),
+            )
+        )
         return
 
     joined = " ".join(args)
@@ -1879,6 +1894,55 @@ async def _run_scribe(
         },
     )
 
+
+async def cmd_measure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Paste observations onto the card. Secret values never echoed. No Discord."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    args = list(context.args or [])
+    if args and args[0].lower() == "clear":
+        key = args[1] if len(args) > 1 else "all"
+        await message.reply_text(measure_mod.clear_measurements(context.user_data, key))
+        return
+    if args and args[0].lower() == "list":
+        await message.reply_text(measure_mod.list_text(context.user_data))
+        return
+    if not args:
+        await message.reply_text(measure_mod.start_measure(context.user_data))
+        return
+    # Inline paste after /measure
+    raw = (message.text or "")
+    parts = raw.split(None, 1)
+    paste = parts[1] if len(parts) > 1 else " ".join(args)
+    reply = measure_mod.append_measurements(context.user_data, paste)
+    await message.reply_text(reply)
+    if reply.startswith("Saved "):
+        batch = measure_mod.parse_paste(paste)
+        batch_keys: list[str] = []
+        seen: set[str] = set()
+        for m in batch:
+            if m.get("secret"):
+                continue
+            k = str(m.get("key") or "")
+            if k and k not in seen:
+                seen.add(k)
+                batch_keys.append(k)
+        if batch_keys:
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_MEASURE,
+                {
+                    "measure_keys": batch_keys,
+                    "n": len(batch),
+                    "n_secret": sum(1 for m in batch if m.get("secret")),
+                    "patient_id": _patient_id_from_user_data(context.user_data),
+                },
+            )
+        # Never Discord: measure packets stay off the mirror.
+
+
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Append patient files on the card. Separate from biometric secrets. No LM/Discord."""
     if not await _authorized(update, context):
@@ -1934,6 +1998,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     assert message is not None
     ended_onboard = onboard_mod.end_onboard(context.user_data)
     ended_note = patient_files_mod.end_note(context.user_data)
+    ended_measure = measure_mod.end_measure(context.user_data)
     ended_scribe = scribe_md_mod.end_scribe(context.user_data)
     had_design = context.user_data.pop(PENDING_DESIGN_KEY, None) is not None
     parts: list[str] = []
@@ -1947,6 +2012,8 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parts.append(
             "The pending note was cancelled. Saved patient files were kept."
         )
+    if ended_measure:
+        parts.append(measure_mod.MSG_CANCELLED)
     if ended_scribe:
         parts.append(scribe_md_mod.MSG_CANCELLED)
     if parts:
@@ -1996,8 +2063,35 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     },
                 )
         return
+    if measure_mod.is_armed(context.user_data):
+        # Priority: onboard > note > measure > scribe armed > generic.
+        reply = measure_mod.append_measurements(context.user_data, text)
+        await message.reply_text(reply)
+        if reply.startswith("Saved "):
+            batch = measure_mod.parse_paste(text)
+            batch_keys: list[str] = []
+            seen: set[str] = set()
+            for m in batch:
+                if m.get("secret"):
+                    continue
+                k = str(m.get("key") or "")
+                if k and k not in seen:
+                    seen.add(k)
+                    batch_keys.append(k)
+            if batch_keys:
+                _safe_emit(
+                    _user_id(update),
+                    history_mod.KIND_MEASURE,
+                    {
+                        "measure_keys": batch_keys,
+                        "n": len(batch),
+                        "n_secret": sum(1 for m in batch if m.get("secret")),
+                        "patient_id": _patient_id_from_user_data(context.user_data),
+                    },
+                )
+        return
     if scribe_md_mod.is_armed(context.user_data):
-        # Priority: onboard > note > scribe armed > generic.
+        # Priority: onboard > note > measure > scribe armed > generic.
         scribe_md_mod.end_scribe(context.user_data)
         await _run_scribe(message, context, text, user_id=_user_id(update))
         return
@@ -2086,6 +2180,7 @@ def main() -> None:
     application.add_handler(CommandHandler("cancel", cmd_cancel))
     application.add_handler(CommandHandler("onboard", cmd_onboard))
     application.add_handler(CommandHandler("note", cmd_note))
+    application.add_handler(CommandHandler("measure", cmd_measure))
     application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(CommandHandler("evidence", cmd_evidence))
     application.add_handler(CommandHandler("variant", cmd_variant))

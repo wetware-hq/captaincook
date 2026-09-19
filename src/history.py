@@ -18,6 +18,7 @@ KIND_RESEARCH = "research"
 KIND_EVIDENCE = "evidence"
 KIND_ONBOARD = "onboard_complete"
 KIND_NOTE = "note"
+KIND_MEASURE = "measure"
 KIND_SCRIBE = "scribe"
 KIND_BIOSECURITY = "bioscreen"
 KIND_ESM = "esm"
@@ -46,6 +47,8 @@ _BLOCKED_PAYLOAD_KEYS = frozenset(
         "note_body",
         "text",  # note body must not ride as "text"
         "body",
+        "value",  # measure values must not ride in history payloads
+        "measurements",
     }
 )
 
@@ -80,7 +83,18 @@ def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
             # Brief/minutes md is intentional; still strip absurdly long DNA-like runs.
             clean[k] = v
             continue
-        if k in ("dois", "note_id", "patient_id", "ts", "artifact_paths", "kind_hint"):
+        if k in (
+            "dois",
+            "note_id",
+            "patient_id",
+            "ts",
+            "artifact_paths",
+            "kind_hint",
+            "measure_keys",
+            "measure_key",
+            "n",
+            "n_secret",
+        ):
             clean[k] = v
             continue
         if k == "linked":

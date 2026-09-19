@@ -33,3 +33,18 @@ Ligand design (/design ligand) requires at least ten molecules (about US$0.25) a
 /board — Assemble a Markdown board packet from the current card and patient stores. Research use only; not a clinical record.
 /board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
 ```
+
+## HELP `/measure` one-liner (locked)
+
+```
+/measure — Paste patient observations onto the current card (HR, BP, weight_kg=…, optional secret). /measure list shows keys; secret values are never shown. Research use only; not a diagnosis.
+```
+
+## HELP `/measure` commands (locked)
+
+```
+/measure — Arm the next message as a measurement paste.
+/measure <lines> — Parse a short paste immediately.
+/measure list — List keys and counts. Secret measures appear only as a count.
+/measure clear [key|all] — Clear one key series or all measurements on this card.
+```

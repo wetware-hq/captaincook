@@ -22,9 +22,9 @@ TTL_SEC = 24 * 60 * 60
 def fingerprint(card: ContextCard) -> str:
     """SHA-256 of the canonical formal fields.
 
-    raw_text / last_run are ignored. Patient biometric secrets and patient_files
-    live on the card dict, not the dataclass, and are therefore excluded from
-    this fingerprint.
+    raw_text / last_run are ignored. Patient biometric secrets, patient_files,
+    and measurements (including secret measure values) live on the card dict,
+    not the dataclass, and are therefore excluded from this fingerprint.
     """
     gene = (card.gene or "").strip().upper().replace("-", "") or None
     variant = (card.variant or "").strip().upper().replace("-", "") or None

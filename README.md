@@ -61,6 +61,9 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
 | `/board` | Assembles a Markdown board packet from the current card and patient stores. |
 | `/board update` | Same as `/board` — fresh snapshot of current stores (not an incremental merge). |
+| `/measure` | Paste patient observations onto the card (controlled keys; optional `secret`). `/measure list` / `/measure clear`. Secrets never echoed. Research use only. |
+| `/measure list` | Keys and counts only; secret values never shown. |
+| `/measure clear [key\|all]` | Drop one key series or all measurements on this card. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 

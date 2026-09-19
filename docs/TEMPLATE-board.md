@@ -18,6 +18,10 @@ This packet assembles the current session stores for a case conference or molecu
 - Patient biometrics: {on file|incomplete|none}
 - Patient files: {n} on file (contents not shown)
 
+## Measurements
+
+{measurements_block}
+
 ## Evidence
 
 {evidence_block}
@@ -91,6 +95,11 @@ Board packet for this session. Research use only; not a clinical record.
 /board — Assemble a Markdown board packet from the current card and patient stores. Research use only; not a clinical record.
 /board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
 ```
+
+
+### Measurements (from `/measure`)
+
+See `TEMPLATE-measure.md`. Non-secret key–value lines + secret count stub only.
 
 ## Refuse
 
