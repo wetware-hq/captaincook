@@ -105,7 +105,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-*Research use only.* This bot predicts protein structure and binding, and it can propose in-silico small molecules, through hosted Biohub and Boltz services.
+*Research use only.* This bot predicts protein structure and binding via Biohub and Boltz, proposes in-silico small-molecule ligands via Boltz, and designs in-silico protein binders via BindCraft (optional Modal compute).
 
 Commands:
 /start — A brief introduction.
@@ -121,7 +121,7 @@ Commands:
 /load clear — Discard the card, patient biometrics, and patient files.
 /download — Send the structure file, and the design table if present, from the last run on the current card.
 /view — Show the stored photograph and description for this card, if a matching completed run exists. No new computation is started.
-/confirm — Begin a pending design job. The reply is one photograph with a short clinical caption. Files follow via /download.
+/confirm — Begin a pending ligand or binder design job. The reply is one photograph with a short clinical caption when rendering succeeds. Files follow via /download.
 /cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note or /scribe, without clearing saved biometrics or patient files.
 /onboard — Collect patient biometrics (age, sex, weight, height) one question at a time. Values are secrets and are never shown in card dumps.
 /onboard status — Report whether biometrics are complete, without printing values.
@@ -139,7 +139,7 @@ A bare /esm or /boltz uses the sequence on the loaded card when one is present. 
 
 On KRAS, naming Switch-II (or Switch 2 / SII) fills hotspot residues from the curated fixture map (residues 60–76). Other pocket names do not set a hotspot by themselves; supply residue numbers on the card if you want a hotspot, otherwise the run is target-wide.
 
-Design jobs require at least ten molecules (about US$0.25) and at most one hundred. The confirm card states the estimated cost before any charge. Candidates are computer suggestions only. They are not validated inhibitors, and this bot does not advise synthesis or laboratory work.
+Ligand design (/design ligand) requires at least ten molecules (about US$0.25) and at most one hundred. Binder design (/design binder) defaults to five designs and caps at twenty; jobs can take tens of minutes to a few hours. The confirm card states mode, count, and any cost estimate before work begins. Candidates are computer suggestions only. They are not validated inhibitors or therapeutics, and this bot does not advise synthesis or laboratory work.
 
 A successful result is one photograph with a short clinical caption. Use /download to retrieve the structure file or the design table.
 
@@ -547,9 +547,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
     await update.effective_message.reply_text(
-        "This is a research bot for Biohub and Boltz models. Send /help for the list "
-        "of commands. It predicts protein structure and binding, and it can propose "
-        "in-silico small molecules after /design and /confirm. It does not offer "
+        "This is a research bot for Biohub, Boltz, and BindCraft models. Send /help for the list "
+        "of commands. It predicts protein structure and binding, proposes in-silico small-molecule "
+        "ligands, and designs in-silico protein binders after /design and /confirm. It does not offer "
         "clinical advice, and it does not guide laboratory work."
     )
 
