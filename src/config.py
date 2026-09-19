@@ -36,7 +36,7 @@ class Settings:
     scribe_llm_model: str = ""
     # Optional BindCraft (/design binder). Fail-closed if unset or missing.
     bindcraft_home: str = ""
-    bindcraft_timeout_sec: int = 3600
+    bindcraft_timeout_sec: int = 10800
     # Optional Modal compute for /design binder (GPU only; no PHI on Modal).
     modal_token_id: str = ""
     modal_token_secret: str = ""
@@ -81,7 +81,7 @@ def load_settings() -> Settings:
     if commec_timeout < 1:
         raise SystemExit("COMMEC_TIMEOUT_SEC must be >= 1.")
 
-    bc_timeout_raw = (os.getenv("BINDCRAFT_TIMEOUT_SEC") or "3600").strip()
+    bc_timeout_raw = (os.getenv("BINDCRAFT_TIMEOUT_SEC") or "10800").strip()
     try:
         bc_timeout = int(bc_timeout_raw)
     except ValueError:

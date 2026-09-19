@@ -5,6 +5,9 @@ WORKDIR /app
 # System deps some scientific wheels expect
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    python3-pymol \
+    pymol \
+    python3-pil \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

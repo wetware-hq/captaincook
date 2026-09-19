@@ -189,7 +189,7 @@ def run_bindcraft_modal(
     token_id: str | None = None,
     token_secret: str | None = None,
     app_name: str | None = None,
-    timeout_sec: int = 3600,
+    timeout_sec: int = 10800,
 ) -> ModalBinderResult:
     """Invoke Modal BindCraft job. Fail-closed — never invents binders.
 

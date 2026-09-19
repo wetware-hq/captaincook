@@ -15,7 +15,7 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Channel | Telegram long-polling via `python-telegram-bot` v21+ on Python 3.11+. |
 | Compute | Biohub ([`biohub.ai`](https://biohub.ai/learn/getting-started)) for folding; Boltz ([`api.boltz.bio`](https://api.boltz.bio/docs/)) for structure, binding, and ligand design; BindCraft (optional Modal GPU) for protein binders. |
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
-| Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. No diagnosis or drug claims. |
+| Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. Binder photos: target default colour, binder accent; N=1 single complex, N>1 grid. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief → Telegram `.md` and `lab.ipynb` literature cell (bioRxiv/medRxiv only; no care-framed route to clinic). `/evidence` → peer-reviewed brief → Telegram `.md` and `clinic.md` `## Evidence` (MEDLINE; preprints excluded). Each brief uses Harvard references (≤5, DOI preferred). Social (X) signal is deferred. |
 | Minutes | `/scribe` → one structured Markdown meeting-minutes document from user-supplied text. Unlinked by default (user inbox); when linked, the sorter appends under `clinic.md` `## Meeting minutes`. Fail-closed if the scribe LLM is unset or down. |
 | Artifacts | mmCIF and design `candidates.csv` remain on the chat context card; `/download` sends them as documents. |
@@ -76,10 +76,10 @@ Candidates are ranked in silico only. A covalent design request without an expli
 
 ### Binder (BindCraft)
 
-1. `/load` a target and obtain a structure (for example `/esm` or `/boltz`).
-2. `/design binder` `[n]` shows a confirm card (default N=5, cap 20). Hotspot residues are used only if present on the card; otherwise the run is target-wide and stated as such. Hotspots are not invented.
+1. `/load` a target and obtain a structure (for example `/esm` or `/boltz`). For KRAS G12C, “Switch-II” maps to curated hotspot residues **60–76** (fixture only; never LM-invented).
+2. `/design binder` `[n]` shows a confirm card (default N=5, cap 20). Hotspot residues are used only if present on the card (or from the KRAS Switch-II fixture map); otherwise the run is target-wide and stated as such. Hotspots are not invented. Binder jobs can take tens of minutes to a few hours.
 3. `/confirm` runs BindCraft on optional Modal compute-only GPU (or local `BINDCRAFT_HOME`). Missing Modal/BindCraft configuration **fail-closes** — no invented binders.
-4. Results sync back to the poller: one photo + research-use caption; artifacts via `/download`; sorter writes `lab.ipynb` and `search.json` under `binder:`. Patient files and biometrics never go to Modal.
+4. Success returns one Telegram **`reply_photo`**: **N=1** is a single target+binder cartoon; **N>1** is a ranked ligand-style grid of complex views. The **target** keeps the default cartoon colour; the **binder** chain is coloured distinctly (orange) so the design is visually separable. If image render fails, a text caption plus `/download` is used — never a blank chat. CIF/FASTA stay on the card for `/download`; sorter writes `lab.ipynb` and `search.json` under `binder:`. Patient files and biometrics never go to Modal.
 
 ## Credentials
 

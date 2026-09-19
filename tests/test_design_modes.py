@@ -9,6 +9,9 @@ from src import bindcraft as bindcraft_mod
 from src.bot import (
     COPY_BIND_STUB,
     COPY_BINDCRAFT_NOT_CONFIGURED,
+    COPY_BINDER_CONFIRM_HOTSPOT,
+    COPY_BINDER_CONFIRM_SWITCH2_FIXTURE,
+    COPY_BINDER_CONFIRM_TARGET_WIDE,
     COPY_DESIGN_MODE_PROMPT,
     HELP_TEXT,
     PENDING_DESIGN_KEY,
@@ -72,6 +75,20 @@ class TestDesignModes(unittest.IsolatedAsyncioTestCase):
             "/design — Ask which mode: ligand or binder.",
             HELP_TEXT,
         )
+        self.assertIn("Switch-II", HELP_TEXT)
+        self.assertIn(
+            "curated fixture map",
+            HELP_TEXT,
+        )
+        self.assertIn("KRAS Switch-II fixture map", COPY_BINDER_CONFIRM_SWITCH2_FIXTURE)
+        self.assertIn("60–76", COPY_BINDER_CONFIRM_SWITCH2_FIXTURE)
+        self.assertIn("not free-text invention", COPY_BINDER_CONFIRM_SWITCH2_FIXTURE)
+
+    def test_binder_confirm_duration_phrase(self):
+        phrase = "tens of minutes to a few hours"
+        self.assertIn(phrase, COPY_BINDER_CONFIRM_HOTSPOT)
+        self.assertIn(phrase, COPY_BINDER_CONFIRM_SWITCH2_FIXTURE)
+        self.assertIn(phrase, COPY_BINDER_CONFIRM_TARGET_WIDE)
 
     def test_binder_compute_ready_modal_or_home(self):
         self.assertFalse(bindcraft_mod.binder_compute_ready(""))

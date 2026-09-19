@@ -63,7 +63,17 @@ from .intent import (
 )
 from . import bindcraft as bindcraft_mod
 from . import modal_bindcraft as modal_bindcraft_mod
-from .photo import send_design_photo, send_structure_photo
+from .targets import (
+    HOTSPOT_SOURCE_KRAS_SWITCH_II,
+    pocket_residues_to_hotspot_list,
+)
+from .photo import (
+    IMAGE_RENDER_FAILED,
+    list_binder_cifs,
+    send_binder_photo,
+    send_design_photo,
+    send_structure_photo,
+)
 from .research_client import ResearchServiceError, search_preprints
 from .research_md import (
     MSG_FAIL_CLOSED,
@@ -127,6 +137,8 @@ Patient biometrics are for research context only. The user is responsible for la
 
 A bare /esm or /boltz uses the sequence on the loaded card when one is present. Bare /design asks which mode to use. /design ligand uses the card sequence when one is present.
 
+On KRAS, naming Switch-II (or Switch 2 / SII) fills hotspot residues from the curated fixture map (residues 60–76). Other pocket names do not set a hotspot by themselves; supply residue numbers on the card if you want a hotspot, otherwise the run is target-wide.
+
 Design jobs require at least ten molecules (about US$0.25) and at most one hundred. The confirm card states the estimated cost before any charge. Candidates are computer suggestions only. They are not validated inhibitors, and this bot does not advise synthesis or laboratory work.
 
 A successful result is one photograph with a short clinical caption. Use /download to retrieve the structure file or the design table.
@@ -176,6 +188,12 @@ COPY_MODAL_BINDCRAFT_NOT_DEPLOYED = (
     "No binder design was started. Ligand design via /design ligand remains "
     "available if Boltz is configured."
 )
+COPY_MODAL_BINDCRAFT_FAILED = (
+    "This request cannot proceed. The Modal BindCraft job failed or timed out "
+    "(weights/runner error, no filter-passing designs, or GPU timeout). "
+    "No binder design was started. Ligand design via /design ligand remains "
+    "available if Boltz is configured."
+)
 COPY_BINDER_NO_STRUCTURE = (
     "This request cannot proceed. Binder design needs a context card with a "
     "target structure. Please /load a target and obtain a structure "
@@ -189,20 +207,39 @@ COPY_LIGAND_CONFIRM = (
 )
 COPY_BINDER_CONFIRM_HOTSPOT = (
     "Pending binder design (BindCraft). Designs: {n}. Hotspot residues will be "
-    "used as supplied on the card. Research use only — in-silico protein binders, "
-    "not validated therapeutics. Reply /confirm to spend or /cancel to stop."
+    "used as supplied on the card. This job can take tens of minutes to a few hours. "
+    "Research use only — in-silico protein binders, not validated therapeutics. "
+    "Reply /confirm to spend or /cancel to stop."
+)
+COPY_BINDER_CONFIRM_SWITCH2_FIXTURE = (
+    "Pending binder design (BindCraft). Designs: {n}. Hotspot residues 60–76 come from "
+    "the curated KRAS Switch-II fixture map (not free-text invention). This job can take "
+    "tens of minutes to a few hours. Research use only — in-silico protein binders, not "
+    "validated therapeutics. Reply /confirm to spend or /cancel to stop."
 )
 COPY_BINDER_CONFIRM_TARGET_WIDE = (
     "Pending binder design (BindCraft). Designs: {n}. No hotspot was supplied; "
-    "the run is target-wide. Hotspots are not invented. Research use only — "
-    "in-silico protein binders, not validated therapeutics. "
-    "Reply /confirm to spend or /cancel to stop."
+    "the run is target-wide. Hotspots are not invented. This job can take tens of "
+    "minutes to a few hours. Research use only — in-silico protein binders, not "
+    "validated therapeutics. Reply /confirm to spend or /cancel to stop."
 )
-COPY_BINDER_RESULT_CAPTION = (
-    "This image shows ranked in-silico protein binder designs from BindCraft "
-    "for the loaded target. Scores and poses are computational estimates only. "
+COPY_BINDER_RESULT_PHOTO_N1 = (
+    "This image shows the loaded target with one ranked in-silico protein binder "
+    "from BindCraft. Scores and poses are computational estimates only. "
     "Research use only; not a validated binder or therapeutic."
 )
+COPY_BINDER_RESULT_PHOTO_GRID = (
+    "This image is a grid of ranked in-silico protein binders from BindCraft on "
+    "the loaded target. Each cell is a computational complex view. Scores and "
+    "poses are estimates only. Research use only; not validated binders or therapeutics."
+)
+COPY_BINDER_RESULT_TEXT_FALLBACK = (
+    "BindCraft returned ranked in-silico protein binder designs for the loaded "
+    "target. Structure files are available via /download. Scores are computational "
+    "estimates only. Research use only; not a validated binder or therapeutic."
+)
+# Back-compat alias (prefer photo N1 when a single complex is shown).
+COPY_BINDER_RESULT_CAPTION = COPY_BINDER_RESULT_PHOTO_N1
 
 # Binder N defaults (BindCraft path; distinct from Boltz ligand floor of 10).
 DEFAULT_BINDER_N = 5
@@ -674,11 +711,13 @@ async def cmd_esm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 keep_path=keep,
             )
             if not ok:
-                await message.reply_text(caption)
+                await message.reply_text(f"{IMAGE_RENDER_FAILED}\n\n{caption}")
         finally:
             _safe_unlink(cif)
     else:
-        await message.reply_text(caption)
+        await message.reply_text(
+            "The fold returned no structure file to display. " + caption
+        )
     files, png = _keep_result_png(files, dest)
     await _persist_interpretation(
         context,
@@ -701,8 +740,11 @@ async def cmd_boltz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await message.reply_text(
                 "A protein sequence is required. Please send /boltz followed by an "
                 "amino-acid sequence, or add a ligand SMILES after the sequence. "
-                "You may also /load a target first and then send /boltz alone. "
-                "For small-molecule design, please use /design."
+                "If you /load a natural-language request that does not resolve to a "
+                "sequence, bare /boltz cannot run — paste a sequence or /load a curated "
+                "target (for example KRAS G12C), then /boltz again after a successful "
+                "fold is available for later /design binder. "
+                "For small-molecule design, please use /design ligand."
             )
             return
         protein_raw = card.sequence
@@ -788,11 +830,13 @@ async def cmd_boltz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 keep_path=keep,
             )
             if not ok:
-                await message.reply_text(caption)
+                await message.reply_text(f"{IMAGE_RENDER_FAILED}\n\n{caption}")
         finally:
             _safe_unlink(cif)
     else:
-        await message.reply_text(caption)
+        await message.reply_text(
+            "Boltz returned no structure file to display. " + caption
+        )
     files, png = _keep_result_png(files, dest)
     await _persist_interpretation(
         context,
@@ -854,11 +898,26 @@ def _card_has_structure(card) -> bool:
     return file_of_kind(last, "cif") is not None
 
 
-def _card_hotspot(card) -> list | None:
-    """Return hotspot residues only if explicitly supplied on the card. Never invent."""
+def _card_hotspot_source(card) -> str | None:
+    """Provenance for binder confirm COPY. Never invent."""
     if card is None:
         return None
-    # Explicit optional field only — do not treat pocket_residues as a hotspot.
+    src = getattr(card, "hotspot_source", None)
+    if src:
+        return src
+    raw = getattr(card, "to_dict", lambda: {})()
+    if isinstance(raw, dict) and raw.get("hotspot_source"):
+        return raw.get("hotspot_source")
+    return None
+
+
+def _card_hotspot(card) -> list | None:
+    """Return hotspot residues only from explicit card supply or curated fixture map.
+
+    Never LM-invent. Ordinary pocket_residues without hotspot_source are not a hotspot.
+    """
+    if card is None:
+        return None
     hotspot = getattr(card, "hotspot_residues", None)
     if hotspot:
         return hotspot
@@ -866,6 +925,10 @@ def _card_hotspot(card) -> list | None:
     hs = raw.get("hotspot_residues") if isinstance(raw, dict) else None
     if hs:
         return hs
+    # KRAS Switch-II curated fixture → pocket_residues as binder hotspot.
+    if _card_hotspot_source(card) == HOTSPOT_SOURCE_KRAS_SWITCH_II:
+        pocket = getattr(card, "pocket_residues", None)
+        return pocket_residues_to_hotspot_list(pocket)
     return None
 
 
@@ -972,15 +1035,19 @@ async def _queue_binder_design(
         return
 
     hotspot = _card_hotspot(card)
+    hotspot_source = _card_hotspot_source(card)
     cif = file_of_kind(card.last_run or {}, "cif")
     context.user_data[PENDING_DESIGN_KEY] = {
         "mode": "binder",
         "n_designs": n,
         "structure_path": str(cif) if cif else None,
         "hotspot_residues": hotspot,
+        "hotspot_source": hotspot_source,
         "sequence": card.sequence,  # for bioscreen on confirm if present
     }
-    if hotspot:
+    if hotspot and hotspot_source == HOTSPOT_SOURCE_KRAS_SWITCH_II:
+        await message.reply_text(COPY_BINDER_CONFIRM_SWITCH2_FIXTURE.format(n=n))
+    elif hotspot:
         await message.reply_text(COPY_BINDER_CONFIRM_HOTSPOT.format(n=n))
     else:
         await message.reply_text(COPY_BINDER_CONFIRM_TARGET_WIDE.format(n=n))
@@ -1267,9 +1334,13 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 modal_bindcraft_app=getattr(settings, "modal_bindcraft_app", "") or "",
             )
         except modal_bindcraft_mod.ModalBindCraftError as exc:
-            if getattr(exc, "kind", "") == "not_deployed":
+            kind = getattr(exc, "kind", "") or ""
+            if kind == "not_deployed":
                 await message.reply_text(COPY_MODAL_BINDCRAFT_NOT_DEPLOYED)
+            elif kind == "failed":
+                await message.reply_text(COPY_MODAL_BINDCRAFT_FAILED)
             else:
+                # no_tokens / unknown — same shape as missing BINDCRAFT_HOME
                 await message.reply_text(COPY_BINDCRAFT_NOT_CONFIGURED)
             return
         except Exception:
@@ -1277,23 +1348,56 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
 
         # Real result only — sync artifacts to last_run + sorter binder:<design-id>.
+        # Prefer reply_photo (N=1 single complex / N>1 ranked grid); text only if render fails.
         design_id = result.run_id or uuid.uuid4().hex[:12]
         artifact_paths: list[str] = list(result.artifact_paths or [])
         card = load_card(context.user_data)
         files_meta: list[dict[str, Any]] = []
+        keep_png: Path | None = None
         if card is not None and artifact_paths:
             for ap in artifact_paths:
                 p = Path(ap)
                 if p.is_file():
                     kind = "fasta" if p.suffix.lower() in {".fasta", ".fa"} else "cif"
                     files_meta.append({"kind": kind, "path": str(p), "name": p.name})
+            # Stash result.png beside first artifact when possible.
+            keep_png = Path(artifact_paths[0]).resolve().parent / "result.png"
+
+        binder_cifs = list_binder_cifs(artifact_paths)
+        caption_used = COPY_BINDER_RESULT_TEXT_FALLBACK
+        photo_caption = None
+        if binder_cifs:
+            photo_caption = await send_binder_photo(
+                message,
+                binder_cifs,
+                caption_n1=COPY_BINDER_RESULT_PHOTO_N1,
+                caption_grid=COPY_BINDER_RESULT_PHOTO_GRID,
+                keep_path=keep_png,
+            )
+            if photo_caption:
+                caption_used = photo_caption
+                if keep_png is not None and keep_png.is_file():
+                    files_meta.append(
+                        {"kind": "result_png", "path": str(keep_png), "name": "result.png"}
+                    )
+        if not photo_caption:
+            caption_used = COPY_BINDER_RESULT_TEXT_FALLBACK
+            await message.reply_text(caption_used)
+
+        if card is not None:
             await _persist_interpretation(
                 context,
-                COPY_BINDER_RESULT_CAPTION,
+                caption_used,
                 kind="binder_design",
-                metrics={"n": len(result.designs), "source": result.source},
+                metrics={
+                    "n": len(result.designs),
+                    "source": result.source,
+                    "n_cif": len(binder_cifs),
+                    "photo": bool(photo_caption),
+                },
                 run_id=design_id,
                 files=files_meta or None,
+                result_png=str(keep_png) if (keep_png and keep_png.is_file()) else None,
             )
         _safe_emit(
             _user_id(update),
@@ -1305,7 +1409,6 @@ async def cmd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 "artifact_paths": artifact_paths,
             },
         )
-        await message.reply_text(COPY_BINDER_RESULT_CAPTION)
         return
 
     sequence: str = pending["sequence"]
@@ -1466,9 +1569,14 @@ async def cmd_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     png = result_png_path(last_run)
     if png is not None:
-        with png.open("rb") as fh:
-            await message.reply_photo(photo=fh, caption=caption[:1024])
-        return
+        try:
+            data = png.read_bytes()
+        except OSError:
+            data = b""
+        if data and len(data) >= 64:
+            await message.reply_photo(photo=data, caption=caption[:1024])
+            return
+        # Fall through to CIF / CSV redraw if stored PNG is empty or unreadable.
 
     cif = file_of_kind(last_run, "cif")
     if cif is not None:

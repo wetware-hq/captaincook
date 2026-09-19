@@ -23,7 +23,12 @@ from .intent import (
     missing_design_fields,
     DesignRequest,
 )
-from .targets import resolve
+from .targets import (
+    HOTSPOT_SOURCE_KRAS_SWITCH_II,
+    is_kras_gene,
+    kras_switch_ii_pocket_copy,
+    resolve,
+)
 
 Intent = Literal["fold", "structure_binding", "small_molecule_design", "unspecified"]
 SeqSource = Literal["cached_uniprot", "user_paste", "missing"]
@@ -35,6 +40,12 @@ DEFAULT_MAX_USD = 0.50
 _SMILES_HINT = re.compile(r"[=#@\[\]\\/+]")
 _FOLD_RE = re.compile(r"\b(fold|esmfold|structure)\b", re.IGNORECASE)
 _BIND_RE = re.compile(r"\b(bind(?:ing)?|complex|dock)\b", re.IGNORECASE)
+
+# Phrase triggers for curated KRAS Switch-II hotspot map (FEATURE-kras-switch2-hotspot).
+_SWITCH_II_RE = re.compile(
+    r"\b(?:switch[\s-]*ii|switch[\s-]*2|sii)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -55,6 +66,7 @@ class ContextCard:
     chemical_space: str = "enamine_real"
     max_usd: float = DEFAULT_MAX_USD
     pocket_residues: dict[str, list[int]] | None = None
+    hotspot_source: str | None = None  # e.g. kras_switch_ii_fixture; never LM
     reference_ligands: list[str] | None = None
     missing_fields: list[str] = field(default_factory=list)
     created_at: str = ""
@@ -89,6 +101,7 @@ class ContextCard:
                 chemical_space=des.get("chemical_space") or "enamine_real",
                 max_usd=float(des.get("max_usd") or DEFAULT_MAX_USD),
                 pocket_residues=data.get("pocket_residues"),
+                hotspot_source=data.get("hotspot_source"),
                 reference_ligands=data.get("reference_ligands"),
                 missing_fields=list(data.get("missing_fields") or []),
                 created_at=str(data.get("created_at") or ""),
@@ -167,6 +180,14 @@ def parse_load_text(text: str) -> ContextCard:
     else:
         notes_missing.append("target gene or amino-acid sequence")
 
+    hotspot_source: str | None = None
+    # Curated KRAS Switch-II map only — never LM-invent residues for other genes.
+    if _SWITCH_II_RE.search(raw):
+        if is_kras_gene(gene):
+            pocket = kras_switch_ii_pocket_copy()
+            hotspot_source = HOTSPOT_SOURCE_KRAS_SWITCH_II
+        # Non-KRAS + Switch-II → leave pocket unset (target-wide); do not invent.
+
     missing = list(notes_missing)
     if intent == "small_molecule_design":
         req = DesignRequest(
@@ -196,6 +217,7 @@ def parse_load_text(text: str) -> ContextCard:
         n_designs=n_designs,
         n_designs_clamped_from=clamped,
         pocket_residues=pocket,
+        hotspot_source=hotspot_source,
         reference_ligands=refs,
         missing_fields=missing,
         created_at=now,
@@ -248,6 +270,14 @@ def format_card(card: ContextCard, patient: dict[str, Any] | None = None) -> str
         f"The spending cap is US${card.max_usd:.2f}.",
         missing,
     ]
+    if card.pocket_residues:
+        if card.hotspot_source == HOTSPOT_SOURCE_KRAS_SWITCH_II:
+            lines.append(
+                "Hotspot residues from the KRAS Switch-II fixture map: "
+                f"{card.pocket_residues}."
+            )
+        else:
+            lines.append(f"Optional pocket residues: {card.pocket_residues}.")
     if card.last_run and card.last_run.get("interpretation"):
         lines.append("The last completed run was of kind " + str(card.last_run.get("kind") or "result") + ".")
         lines.append(card.last_run["interpretation"])
@@ -345,4 +375,14 @@ if __name__ == "__main__":
     assert c2.missing_fields
     c3 = parse_load_text("fold something unknown")
     assert c3.sequence is None and c3.sequence_source == "missing"
+    c4 = parse_load_text(
+        "design a de novo protein binder to KRAS G12C at the Switch-II pocket"
+    )
+    assert c4.gene == "KRAS" and c4.variant == "G12C"
+    assert c4.pocket_residues == {"A": list(range(60, 77))}
+    assert c4.hotspot_source == HOTSPOT_SOURCE_KRAS_SWITCH_II
+    c5 = parse_load_text("design a binder to EGFR at the Switch-II pocket")
+    assert c5.gene == "EGFR"
+    assert c5.pocket_residues is None
+    assert c5.hotspot_source is None
     print("self-check passed")

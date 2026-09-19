@@ -90,6 +90,8 @@ def run_binder_design(
     """
     use_modal = prefer_modal and modal_creds_ok(modal_token_id, modal_token_secret)
     if use_modal:
+        import tempfile
+
         result = modal_bc.run_bindcraft_modal(
             target_sequence=target_sequence,
             cif_path=structure_path,
@@ -100,10 +102,13 @@ def run_binder_design(
             app_name=modal_bindcraft_app,
             timeout_sec=timeout_sec,
         )
+        # Modal returns bytes; sync onto poller host for last_run / sorter.
+        dest = Path(tempfile.mkdtemp(prefix="binder_modal_"))
+        written = modal_bc.sync_binder_artifacts(dest_dir=dest, result=result)
         return BinderDesignResult(
             designs=list(result.designs),
             run_id=result.run_id,
-            artifact_paths=list(result.artifact_paths),
+            artifact_paths=written or list(result.artifact_paths),
             source="modal",
         )
 

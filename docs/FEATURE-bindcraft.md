@@ -55,3 +55,26 @@ Unchanged Boltz behaviour; HELP/README say `/design ligand` as the explicit smal
 - Wire dual-mode `/design` — biomodels (when GPU ready for binder)  
 - Voice — biolang (`COPY-design.md`)  
 - Pipeline — bioresearch  
+
+## Binder result image (locked 2026-09-19)
+
+Success path **must** attach a PNG via `reply_photo` (target + binder complex cartoon when CIF available), with the research-use 3C as caption — same interpretable result unit as `/boltz` and `/design ligand`.
+
+| Case | Behavior |
+| --- | --- |
+| Binder CIF(s) present + render OK | `reply_photo` + COPY photo caption |
+| Render fails | Text fallback + point to `/download` (biolang COPY); never blank |
+| 0-filter / timeout | Fail-closed refuse (no image invent) |
+
+`/download` still carries CIF/FASTA. Discord out.
+
+## Binder PNG layout (locked 2026-09-19)
+
+Reuse `/boltz` pymol cartoon stack for binders; attach with `reply_photo`.
+
+| N | Layout |
+| --- | --- |
+| **1** | Single **target + binder** complex cartoon |
+| **>1** | Ranked **grid** (ligand-style), each cell a complex view |
+
+Caption from `COPY-design` (photo vs text-only). `/download` keeps CIF/FASTA. Discord out.

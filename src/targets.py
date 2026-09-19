@@ -19,11 +19,13 @@ assert KRAS_CATALYTIC_1_169[11] == "G"  # G12
 KRAS_ACCESSION = "P01116"
 KRAS_ISOFORM = "P01116-2"
 
-# Optional Switch-II pocket residues for confirm-card display / post-confirm use.
-# Shown on the card; never applied silently without user confirm.
+# Curated KRAS Switch-II hotspot (human numbering on catalytic 1–169).
+# Applied only when NL names Switch-II / Switch 2 / SII — never LM-invented.
+# Inclusive 60–76 → list(range(60, 77)).
 KRAS_SWITCH_II_POCKET: dict[str, list[int]] = {
-    "A": [12, 16, 68, 69, 92, 95, 96, 99],
+    "A": list(range(60, 77)),
 }
+HOTSPOT_SOURCE_KRAS_SWITCH_II = "kras_switch_ii_fixture"
 
 # Public reference SMILES for pocket finding (sotorasib-class); card display only
 # until confirm. Research-use in-silico reference — not a synthesis instruction.
@@ -31,6 +33,30 @@ SOTORASIB_SMILES = (
     "CC1CN(CCN1C2=NC(=O)N(C3=NC(=C(C=C32)F)C4=C(C=CC=C4F)O)"
     "C5=C(C=CN=C5C(C)C)C)C(=O)C=C"
 )
+
+def is_kras_gene(gene: str | None) -> bool:
+    if not gene:
+        return False
+    return gene.upper().replace("-", "") == "KRAS"
+
+
+def kras_switch_ii_pocket_copy() -> dict[str, list[int]]:
+    """Fresh copy of the curated Switch-II residue map (chain A, 60–76)."""
+    return {k: list(v) for k, v in KRAS_SWITCH_II_POCKET.items()}
+
+
+def pocket_residues_to_hotspot_list(
+    pocket: dict[str, list[int]] | None,
+) -> list[str] | None:
+    """Flatten pocket_residues to BindCraft-style hotspot tokens (e.g. A60)."""
+    if not pocket:
+        return None
+    out: list[str] = []
+    for chain, residues in pocket.items():
+        for r in residues:
+            out.append(f"{chain}{int(r)}")
+    return out or None
+
 
 _SUPPORTED_VARIANTS = {"WT", "G12C", "G12D", "G12V"}
 
@@ -90,13 +116,13 @@ def resolve(gene: str, variant: str | None) -> ResolvedTarget:
         accession = f"{KRAS_ACCESSION}+{variant}"
         notes_parts.append(f"Applied {variant} on residue 12.")
 
-    # Presets for confirm card only (caller shows them before design).
+    # G12C: optional sotorasib-class reference ligand for ligand path.
+    # Switch-II hotspot residues are NOT auto-attached here — only when NL
+    # names Switch-II (see context_card.parse_load_text + FEATURE-kras-switch2).
     if variant == "G12C":
-        pocket = {k: list(v) for k, v in KRAS_SWITCH_II_POCKET.items()}
         refs = [SOTORASIB_SMILES]
         notes_parts.append(
-            "Optional Switch-II pocket + sotorasib-class reference ligand "
-            "listed on confirm card."
+            "Optional sotorasib-class reference ligand listed on confirm card."
         )
 
     return ResolvedTarget(
@@ -118,6 +144,8 @@ if __name__ == "__main__":
     assert g12c.sequence[11] == "C"
     assert g12c.sequence[:11] == KRAS_CATALYTIC_1_169[:11]
     assert g12c.sequence[12:] == KRAS_CATALYTIC_1_169[12:]
+    assert g12c.pocket_residues is None  # Switch-II only via NL phrase
+    assert KRAS_SWITCH_II_POCKET["A"] == list(range(60, 77))
     g12d = resolve("k-ras", "G12D")
     assert g12d.sequence[11] == "D"
     g12v = resolve("KRAS", "G12V")

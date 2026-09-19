@@ -57,3 +57,11 @@ python -m src.structure_photo /path/to/model.cif -o out.png --engine pymol
 ## Smoke outputs
 
 PNGs land under `boltz-experiments/photo-smoke/` during seed smoke tests.
+
+## Last-resort Cα tube (no PyMOL/Mol*)
+
+If headless PyMOL and Mol* are unavailable, `structure_photo` draws a **smoothed Cα
+tube** from real mmCIF coordinates (Bio.PDB/biotite + matplotlib). That PNG is
+**simplified** — not a cartoon/ribbon ray-trace. Telegram captions must say so and
+point to `/download` CIF as the source of truth for binder work. Prefer installing
+PyMOL (above) so `/boltz` attaches a proper cartoon.
