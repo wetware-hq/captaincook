@@ -232,7 +232,7 @@ class TestCmdBoard(unittest.IsolatedAsyncioTestCase):
             await cmd_board(update, context)
         update.effective_message.reply_text.assert_awaited_once()
         args = update.effective_message.reply_text.await_args
-        self.assertEqual(args.args[0], board_md.MSG_REFUSE)
+        self.assertEqual(args.args[0], board_md.MSG_REFUSE_APP)
         update.effective_message.reply_document.assert_not_called()
 
     async def test_document_with_card(self):
@@ -261,17 +261,17 @@ class TestCmdBoard(unittest.IsolatedAsyncioTestCase):
             await cmd_board(update, context)
         update.effective_message.reply_document.assert_awaited_once()
         kwargs = update.effective_message.reply_document.await_args.kwargs
-        self.assertEqual(kwargs["filename"], "board-packet.md")
-        self.assertEqual(kwargs["caption"], board_md.CAPTION)
+        self.assertEqual(kwargs["filename"], "case-conference-packet.md")
+        self.assertEqual(kwargs["caption"], board_md.CAPTION_MD_ONLY)
         doc = kwargs["document"]
         doc.seek(0)
         body = doc.read().decode("utf-8")
         self.assertIn("`binder:bind42`", body)
-        self.assertIn("# Board packet", body)
+        self.assertIn("# Case conference packet", body)
         # Optional stash
         stored = user_data.get(CONTEXT_CARD_KEY) or {}
         lr = stored.get("last_run") or {}
-        self.assertEqual(lr.get("board_md"), "board-packet.md")
+        self.assertEqual(lr.get("board_md"), "case-conference-packet.md")
 
 
 class TestHelpMentionsBoard(unittest.TestCase):
@@ -294,7 +294,8 @@ class TestBoardUpdateAlias(unittest.TestCase):
     def test_help_lists_board_update(self):
         from src import bot as bot_mod
         self.assertIn("/board update", bot_mod.HELP_TEXT)
-        self.assertIn("not an incremental merge", bot_mod.HELP_TEXT)
+        self.assertIn("/app", bot_mod.HELP_TEXT)
+        self.assertIn("Alias of /app", bot_mod.HELP_TEXT)
 
     def test_feature_doc_alias(self):
         from pathlib import Path

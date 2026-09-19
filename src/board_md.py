@@ -1,6 +1,7 @@
-"""Assemble /board Markdown packet from session stores.
+"""Assemble /app (and /board alias) Markdown case-conference packet from session stores.
 
-Verbatim locked strings from docs/TEMPLATE-board.md. Research-use only.
+Shared redaction path for /app and /board. Verbatim locked strings from
+docs/TEMPLATE-board.md + docs/TEMPLATE-app.md. Research-use only.
 Never echo biometric secrets, note bodies, or secret measure values. Never invent evidence or designs.
 """
 
@@ -48,6 +49,57 @@ OPEN_NONE_GAPS = (
 
 CAPTION = (
     "Board packet for this session. Research use only; not a clinical record."
+)
+
+# --- Locked TEMPLATE-app.md (verbatim) ---
+PACKET_TITLE = "# Case conference packet"
+
+CAPTION_MD_ONLY = (
+    "Case conference packet for this session. Research use only; not a clinical record."
+)
+
+CAPTION_WITH_LINK = (
+    "Case conference packet for this session. Research use only; not a clinical record. "
+    "Open live view (shared link, expires {date}): {url}"
+)
+
+MSG_LIVE_FAIL = (
+    "The Markdown packet is ready. A live web view could not be created because "
+    "hosting is not configured or the deploy failed. Secret values were not uploaded. "
+    "You can still use the document above."
+)
+
+MSG_REVOKE_OK = (
+    "The live view link has been revoked. The Markdown packet in this chat is unchanged. "
+    "Secret values were never in the page."
+)
+
+MSG_REVOKE_NONE = (
+    "There is no live view link on file to revoke for this session."
+)
+
+MSG_EXPIRED_PAGE = (
+    "This live view has expired or was revoked. Ask the operator to run /app again "
+    "for a fresh short-lived link. Research use only; not a clinical record."
+)
+
+LIVE_BANNER = (
+    "Research use only. This page is a short-lived case-conference view. It is not a "
+    "clinical record, not a diagnosis, and not treatment advice. Secret measurements "
+    "and biometric values are omitted."
+)
+
+LIVE_FOOTER = (
+    "Generated from the Telegram session stores. This shared link expires "
+    "(default 7 days; maximum 30). Do not forward if the page could identify a patient. "
+    "Not a medical record."
+)
+
+FIGURE_CAPTION = "Figure. {key} over time (non-secret session measurements only)."
+
+MSG_REFUSE_APP = (
+    "This request cannot proceed. There is no context card and no patient on "
+    "file to assemble a case conference packet. Please /load a case or /onboard a patient first."
 )
 
 # --- Locked TEMPLATE-measure.md board stubs (verbatim) ---
@@ -432,7 +484,7 @@ def render_board_md(
     measure_block = measure_mod.board_measurements_block(user_data)
 
     return (
-        "# Board packet\n"
+        f"{PACKET_TITLE}\n"
         "\n"
         f"{DISCLAIMER}\n"
         "\n"
@@ -495,3 +547,70 @@ def stash_board_path_on_card(
         prior["kind"] = prior.get("kind") or "board"
     card.last_run = prior
     store_card(user_data, card)
+
+
+def render_app_md(
+    user_data: dict[str, Any] | None,
+    *,
+    user_id: int | str | None = None,
+) -> str:
+    """Strict alias of render_board_md — identical redaction; TEMPLATE-app title."""
+    return render_board_md(user_data, user_id=user_id)
+
+
+def caption_for_live_view(*, url: str, expires_date: str) -> str:
+    """TEMPLATE-app caption with shared link and expiry day (no secrets)."""
+    return CAPTION_WITH_LINK.format(url=url, date=expires_date)
+
+
+def stash_app_live_on_card(
+    user_data: dict[str, Any],
+    *,
+    slug: str | None,
+    url: str | None,
+    expires_at: str | None,
+    md_name: str = "case-conference-packet.md",
+) -> None:
+    """Record app MD path + optional live-view metadata on card last_run."""
+    from .context_card import store_card
+
+    card = load_card(user_data)
+    if card is None:
+        return
+    prior = dict(card.last_run) if isinstance(card.last_run, dict) else {}
+    prior["board_md"] = md_name
+    prior["app_md"] = md_name
+    if slug:
+        prior["app_live_slug"] = slug
+    else:
+        prior.pop("app_live_slug", None)
+    if url:
+        prior["app_live_url"] = url
+    else:
+        prior.pop("app_live_url", None)
+    if expires_at:
+        prior["app_live_expires"] = expires_at
+    else:
+        prior.pop("app_live_expires", None)
+    if "kind" not in prior:
+        prior["kind"] = prior.get("kind") or "app"
+    card.last_run = prior
+    store_card(user_data, card)
+
+
+def clear_app_live_on_card(user_data: dict[str, Any]) -> dict[str, Any]:
+    """Clear live-view fields from card; return prior live metadata if any."""
+    from .context_card import store_card
+
+    card = load_card(user_data)
+    if card is None:
+        return {}
+    prior = dict(card.last_run) if isinstance(card.last_run, dict) else {}
+    cleared = {
+        "slug": prior.pop("app_live_slug", None),
+        "url": prior.pop("app_live_url", None),
+        "expires_at": prior.pop("app_live_expires", None),
+    }
+    card.last_run = prior
+    store_card(user_data, card)
+    return cleared

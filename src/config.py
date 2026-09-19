@@ -41,6 +41,16 @@ class Settings:
     modal_token_id: str = ""
     modal_token_secret: str = ""
     modal_bindcraft_app: str = ""
+    # Optional /app live-view TTL host (fail-closed if unset)
+    app_deploy_provider: str = ""
+    app_deploy_token: str = ""
+    app_deploy_base_url: str = ""
+    app_deploy_put_url: str = ""
+    app_deploy_delete_url: str = ""
+    app_deploy_signing_secret: str = ""
+    app_deploy_account_id: str = ""
+    app_deploy_project: str = ""
+    app_deploy_ttl_days: int = 7
 
 
 def _require(name: str) -> str:
@@ -51,6 +61,16 @@ def _require(name: str) -> str:
             f"Copy .env.example to .env and set {name}, then re-run: python -m src.bot"
         )
     return value
+
+
+
+def _app_ttl_days() -> int:
+    raw = (os.getenv("APP_DEPLOY_TTL_DAYS") or "7").strip()
+    try:
+        days = int(raw)
+    except ValueError:
+        return 7
+    return max(1, min(days, 30))
 
 
 def load_settings() -> Settings:
@@ -107,6 +127,17 @@ def load_settings() -> Settings:
         modal_token_id=(os.getenv("MODAL_TOKEN_ID") or "").strip(),
         modal_token_secret=(os.getenv("MODAL_TOKEN_SECRET") or "").strip(),
         modal_bindcraft_app=(os.getenv("MODAL_BINDCRAFT_APP") or "").strip(),
+        app_deploy_provider=(os.getenv("APP_DEPLOY_PROVIDER") or "").strip().lower(),
+        app_deploy_token=(
+            os.getenv("APP_DEPLOY_TOKEN") or os.getenv("APP_DEPLOY_API_TOKEN") or ""
+        ).strip(),
+        app_deploy_base_url=(os.getenv("APP_DEPLOY_BASE_URL") or "").strip().rstrip("/"),
+        app_deploy_put_url=(os.getenv("APP_DEPLOY_PUT_URL") or "").strip(),
+        app_deploy_delete_url=(os.getenv("APP_DEPLOY_DELETE_URL") or "").strip(),
+        app_deploy_signing_secret=(os.getenv("APP_DEPLOY_SIGNING_SECRET") or "").strip(),
+        app_deploy_account_id=(os.getenv("APP_DEPLOY_ACCOUNT_ID") or "").strip(),
+        app_deploy_project=(os.getenv("APP_DEPLOY_PROJECT") or "").strip(),
+        app_deploy_ttl_days=_app_ttl_days(),
     )
 
 

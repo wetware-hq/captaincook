@@ -41,6 +41,8 @@ from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import measure as measure_mod
 from . import board_md as board_md_mod
+from . import app_html as app_html_mod
+from . import app_deploy as app_deploy_mod
 from .card_cache import (
     clear_cache,
     file_of_kind,
@@ -141,8 +143,11 @@ Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 o
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
-/board — Assemble a Markdown board packet from the current card and patient stores (case context, evidence, laboratory designs). Research use only; not a clinical record. Specialty-agnostic case conference aid.
-/board update — Same as /board (fresh snapshot of current stores; not an incremental merge).
+/app — Assemble a Markdown case-conference packet from the current card and patient stores. Optional short-lived web view when configured. Research use only; not a clinical record.
+/app update — Same as /app (fresh snapshot; not an incremental merge).
+/app revoke — End sharing of the current live view early. The Markdown packet is unchanged.
+/board — Alias of /app for one release.
+/board update — Alias of /app for one release.
 /trials [condition or gene variant] — Shortlist public ClinicalTrials.gov studies for the card or query. Eligibility themes only. Research use only; human review required; this bot does not enroll.
 /scribe — Arm the next message as meeting notes, or /scribe `<text>` for short text. Returns one organised Markdown minutes document. Unlinked from the context card and patient stores. Research use only; not a clinical or legal record.
 
@@ -608,40 +613,144 @@ async def cmd_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
-async def cmd_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Assemble board packet from card + patient stores. No Discord PHI. No clinic auto-file.
+async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Assemble case-conference MD packet (+ optional TTL live view). No Discord PHI.
 
-    `/board update` is a strict alias of `/board` (fresh snapshot; no incremental merge).
+    `/app update` and `/board` / `/board update` are strict aliases (fresh snapshot).
+    `/app revoke` ends live-view sharing early.
     """
     if not await _authorized(update, context):
         return
     message = update.effective_message
     assert message is not None
-    # Ignore optional "update" arg — same fresh assemble as bare /board.
     args = [a.lower() for a in (context.args or [])]
-    if args and args != ["update"]:
+
+    # --- revoke ---
+    if args == ["revoke"]:
+        user_data = context.user_data
+        prior = board_md_mod.clear_app_live_on_card(user_data)
+        slug = prior.get("slug")
+        revoked = False
+        if slug:
+            try:
+                revoked = app_deploy_mod.revoke_live_slug(slug)
+            except Exception:  # noqa: BLE001
+                logger.warning("app revoke failed", exc_info=True)
+        if slug or prior.get("url"):
+            await message.reply_text(board_md_mod.MSG_REVOKE_OK)
+        else:
+            await message.reply_text(board_md_mod.MSG_REVOKE_NONE)
+        return
+
+    if args and args not in (["update"],):
         await message.reply_text(
-            "Unknown /board argument. Use /board or /board update "
-            "(same fresh snapshot; not an incremental merge)."
+            "Unknown /app argument. Use /app, /app update, or /app revoke."
         )
         return
+
     user_data = context.user_data
     if not board_md_mod.has_board_inputs(user_data):
-        await message.reply_text(board_md_mod.MSG_REFUSE)
+        await message.reply_text(board_md_mod.MSG_REFUSE_APP)
         return
+
     uid = _user_id(update)
-    body = board_md_mod.render_board_md(user_data, user_id=uid)
+    body = board_md_mod.render_app_md(user_data, user_id=uid)
+    # Identical redaction to legacy /board path (shared renderer).
+    assert body == board_md_mod.render_board_md(user_data, user_id=uid)
+
+    # Rotate prior live view on regenerate
+    prior_live = {}
+    try:
+        card = load_card(user_data)
+        if card is not None and isinstance(card.last_run, dict):
+            prior_live = {
+                "slug": card.last_run.get("app_live_slug"),
+                "url": card.last_run.get("app_live_url"),
+            }
+    except Exception:  # noqa: BLE001
+        prior_live = {}
+
+    live_url = None
+    live_slug = None
+    expires_at = None
+    cfg = app_deploy_mod.load_deploy_config_from_env()
+    html = app_html_mod.render_app_html(user_data, user_id=uid)
+    # Defence: never deploy HTML that embeds known secrets
+    leaked = app_html_mod.html_contains_secrets(html, user_data)
+    if leaked:
+        logger.error("app html secret leak blocked: %s", leaked)
+        deploy = app_deploy_mod.DeployResult(ok=False, error="secret_leak_blocked")
+    elif not cfg.configured:
+        deploy = app_deploy_mod.DeployResult(ok=False, error="not_configured")
+    else:
+        # Re-render with expiry once we know TTL window
+        from datetime import datetime, timedelta, timezone
+
+        days = app_deploy_mod.clamp_ttl_days(cfg.ttl_days, cfg)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+        html = app_html_mod.render_app_html(
+            user_data, user_id=uid, expires_at=expires_at
+        )
+        try:
+            deploy = app_deploy_mod.deploy_live_html(
+                html,
+                cfg=cfg,
+                ttl_days=days,
+                retire_slug=str(prior_live["slug"]) if prior_live.get("slug") else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("app deploy exception", exc_info=True)
+            deploy = app_deploy_mod.DeployResult(ok=False, error=str(exc))
+
+    if deploy.ok and deploy.url and deploy.expires_at:
+        live_url = deploy.url
+        live_slug = deploy.slug
+        expires_at = deploy.expires_at
+        caption = board_md_mod.caption_for_live_view(
+            url=live_url,
+            expires_date=app_deploy_mod.expires_date_label(expires_at),
+        )
+    else:
+        caption = board_md_mod.CAPTION_MD_ONLY
+
     buf = BytesIO(body.encode("utf-8"))
     await message.reply_document(
         document=buf,
-        filename="board-packet.md",
-        caption=board_md_mod.CAPTION,
+        filename="case-conference-packet.md",
+        caption=caption,
     )
-    # Optional stash path marker on card last_run (ephemeral download; no clinic.md write).
+    if not (deploy.ok and live_url):
+        # Clear refuse for link — not blank
+        await message.reply_text(board_md_mod.MSG_LIVE_FAIL)
+
     try:
-        board_md_mod.stash_board_path_on_card(user_data, "board-packet.md")
+        board_md_mod.stash_app_live_on_card(
+            user_data,
+            slug=live_slug,
+            url=live_url,
+            expires_at=(
+                expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else None
+            ),
+            md_name="case-conference-packet.md",
+        )
+        board_md_mod.stash_board_path_on_card(user_data, "case-conference-packet.md")
     except Exception:  # noqa: BLE001
-        logger.warning("board last_run stash failed", exc_info=True)
+        logger.warning("app last_run stash failed", exc_info=True)
+
+
+async def cmd_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Strict alias of /app for one release (including update; revoke stays on /app)."""
+    args = [a.lower() for a in (context.args or [])]
+    if args and args not in (["update"],):
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(
+                "Unknown /board argument. /board is an alias of /app; "
+                "use /board, /board update, or /app revoke."
+            )
+        return
+    # Normalize alias args so cmd_app sees update or bare
+    return await cmd_app(update, context)
 
 
 
@@ -2185,6 +2294,7 @@ def main() -> None:
     application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(CommandHandler("evidence", cmd_evidence))
     application.add_handler(CommandHandler("variant", cmd_variant))
+    application.add_handler(CommandHandler("app", cmd_app))
     application.add_handler(CommandHandler("board", cmd_board))
     application.add_handler(CommandHandler("trials", cmd_trials))
     application.add_handler(CommandHandler("scribe", cmd_scribe))

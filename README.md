@@ -6,7 +6,7 @@ Research-use Telegram agent for structure prediction, ligand and protein-binder 
 
 ## Abstract
 
-Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule (**ligand**) design use Boltz (`boltz-2.1` and the design API). Protein **binder** design uses BindCraft via optional Modal compute-only jobs (fail-closed until configured). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. `/scribe` organises user-supplied meeting text into structured minutes; unlinked minutes sit in a user inbox until assigned to a patient. Per patient, a background sorter maintains exactly two core files — `clinic.md` (clinical prose, including peer-reviewed Evidence) and `lab.ipynb` (structures, designs, preprint literature) — plus a `search.json` sidecar for fast DOI and section lookup. Session biometrics stay secret on the card and never appear as raw values in those files, language-model prompts, research briefs, or Discord. `/board`, `/variant`, and `/trials` support case discussion, variant literature, and public trial shortlists without diagnosing, dosing, or enrolling anyone. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
+Captain Cook accepts a protein sequence or a short natural-language request and returns a single result unit: one image and one clinically readable caption. Folding uses Biohub ESMFold2. Structure prediction, binding scores, and small-molecule (**ligand**) design use Boltz (`boltz-2.1` and the design API). Protein **binder** design uses BindCraft via optional Modal compute-only jobs (fail-closed until configured). All scores are computational estimates. A pre-compute biosecurity gate classifies DNA and RNA before paid GPU work. `/research` returns a preprint literature brief (bioRxiv and medRxiv). `/evidence` returns a peer-reviewed MEDLINE brief with preprints excluded. Both use Europe PMC and Harvard references. `/scribe` organises user-supplied meeting text into structured minutes; unlinked minutes sit in a user inbox until assigned to a patient. Per patient, a background sorter maintains exactly two core files — `clinic.md` (clinical prose, including peer-reviewed Evidence) and `lab.ipynb` (structures, designs, preprint literature) — plus a `search.json` sidecar for fast DOI and section lookup. Session biometrics stay secret on the card and never appear as raw values in those files, language-model prompts, research briefs, or Discord. `/app` (with `/board` alias), `/variant`, and `/trials` support case discussion, variant literature, and public trial shortlists without diagnosing, dosing, or enrolling anyone. The agent does not diagnose disease, recommend therapy, or plan synthesis or wet-lab work. Operators remain responsible for Biohub and Boltz acceptable-use policies and for applicable law.
 
 ## Agent contract
 
@@ -17,7 +17,7 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. Binder photos: target default colour, binder accent; N=1 single complex, N>1 grid. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief → Telegram `.md` and `lab.ipynb` literature cell (bioRxiv/medRxiv only; no care-framed route to clinic). `/evidence` → peer-reviewed brief → Telegram `.md` and `clinic.md` `## Evidence` (MEDLINE; preprints excluded). Each brief uses Harvard references (≤5, DOI preferred). Social (X) signal is deferred. |
-| Board / variant / trials | `/board` (and `/board update` alias) → case-conference MD packet from session stores. `/variant` → papers-first peer-reviewed gene/variant brief (no FM scores in v1). `/trials` → ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Specialty-agnostic; research-use only. |
+| App / variant / trials | `/app` (and `/app update`; `/board` / `/board update` aliases one release) → case-conference MD packet from session stores + optional short-TTL HTTPS live view (7-day default / 30-day max; fail-closed without `APP_DEPLOY_*`). `/app revoke` ends sharing early. Live view merges clinic.md → Clinical and lab.ipynb → Laboratory (no tone bleed). `/variant` → papers-first peer-reviewed gene/variant brief (no FM scores in v1). `/trials` → ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Specialty-agnostic; research-use only. |
 | Minutes | `/scribe` → one structured Markdown meeting-minutes document from user-supplied text. Unlinked by default (user inbox); when linked, the sorter appends under `clinic.md` `## Meeting minutes`. Fail-closed if the scribe LLM is unset or down. |
 | Artifacts | mmCIF and design `candidates.csv` remain on the chat context card; `/download` sends them as documents. |
 | Context | `/load` builds a formal card from natural language without GPU use. Bare `/esm`, `/boltz`, and `/design` consume that card. |
@@ -48,7 +48,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/view` | Replays the stored photo and caption for a matching completed card. |
 | `/download` | Sends the last-run CIF and, for ligand design, the CSV (binder FASTA/CIF when available). |
 | `/confirm` | Runs the pending ligand or binder job; returns one photo and a research-use caption. |
-| `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` / `/measure` capture. |
+| `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` capture. |
 | `/research <topic>` | Europe PMC preprint brief → Markdown document with Harvard references (≤5). |
 | `/evidence <question>` | Europe PMC peer-reviewed brief (MEDLINE; preprints excluded) → Markdown with Harvard references (≤5). |
 | `/onboard` | Collects biometric secrets one question at a time. |
@@ -59,11 +59,11 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/board` | Assembles a Markdown board packet from the current card and patient stores. |
-| `/board update` | Same as `/board` — fresh snapshot of current stores (not an incremental merge). |
-| `/measure` | Paste patient observations (helper-first; synonym gazetteer; unit convert; optional `secret`). Bad paste coaches with examples + re-arm. `/measure list` / `/measure clear`. Secrets never echoed. Research use only. |
-| `/measure list` | Keys and counts only; secret values never shown. |
-| `/measure clear [key\|all]` | Drop one key series or all measurements on this card. |
+| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set. |
+| `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
+| `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
+| `/board` | Alias of `/app` for one release. |
+| `/board update` | Alias of `/app` for one release. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 
