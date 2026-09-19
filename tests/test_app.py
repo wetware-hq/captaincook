@@ -290,7 +290,7 @@ class TestCmdAppAliases(unittest.IsolatedAsyncioTestCase):
 
 
 class TestMolstarStructures(unittest.TestCase):
-    def test_collect_structure_assets_max_three(self):
+    def test_collect_structure_assets_max_two(self):
         user_data: dict = {}
         card = parse_load_text("KRAS G12C fold")
         with tempfile.TemporaryDirectory() as td:
@@ -308,7 +308,7 @@ class TestMolstarStructures(unittest.TestCase):
             )
             store_card(user_data, card)
             assets = app_html.collect_structure_assets(user_data)
-            self.assertEqual(len(assets), 3)
+            self.assertEqual(len(assets), 2)
             self.assertTrue(all(a["format"] == "mmcif" for a in assets))
             self.assertTrue(all(a["path"].is_file() for a in assets))
             self.assertEqual(assets[0]["label"], "model0.cif")

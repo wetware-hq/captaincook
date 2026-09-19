@@ -59,7 +59,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set (Mol* structures for up to 3 mmCIF artifacts). |
+| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set (Mol* structures for up to 2 mmCIF artifacts). |
 | `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |

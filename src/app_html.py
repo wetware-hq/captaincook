@@ -24,7 +24,7 @@ from .context_card import load_card
 
 CHART_KEYS = ("hr", "spo2", "temp_c", "glucose_mmol")
 NONE_YET = "None yet."
-MAX_STRUCTURE_VIEWERS = 3
+MAX_STRUCTURE_VIEWERS = 2
 MAX_CIF_BYTES = 25 * 1024 * 1024
 MOLSTAR_CDN = "https://cdn.jsdelivr.net/npm/molstar@4.18.0/build/viewer"
 _SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
@@ -222,10 +222,10 @@ def _redact_lab_text(text: str) -> str:
 
 
 def collect_structure_assets(user_data: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Existing mmCIF paths from last_run for live Mol* viewers (max 3).
+    """Primary mmCIF path(s) from last_run for one Mol* panel (max 2).
 
-    Returns [{label, path: Path, format: "mmcif"}, ...] for files that still exist.
-    Local paths are never written into HTML — callers upload bytes and pass public URLs.
+    Prefers files with kind=="cif". Returns [{label, path: Path, format: "mmcif"}, ...]
+    for existing files only. Local paths never go into HTML — callers upload + pass HTTPS URLs.
     """
     out: list[dict[str, Any]] = []
     if not user_data:
@@ -241,10 +241,8 @@ def collect_structure_assets(user_data: dict[str, Any] | None) -> list[dict[str,
         kind = str(rec.get("kind") or "").lower().strip()
         name = str(rec.get("name") or "")
         raw_path = str(rec.get("path") or "")
-        is_cif = kind in ("cif", "mmcif", "structure_cif") or (
-            not kind and (name.lower().endswith(".cif") or raw_path.lower().endswith(".cif"))
-        )
-        if not is_cif:
+        # Prefer formal kind=cif; allow mmcif alias only
+        if kind not in ("cif", "mmcif"):
             continue
         path = Path(raw_path)
         if not path.is_file():
@@ -535,7 +533,14 @@ figure.mol-fig figcaption {
       viewportShowSelectionMode: false,
       viewportShowAnimation: false
     }}).then(function (viewer) {{
-      return viewer.loadStructureFromUrl(spec.url, spec.format || "mmcif");
+      try {{
+        if (viewer.plugin && viewer.plugin.canvas3d) {{
+          viewer.plugin.canvas3d.setProps({{
+            renderer: {{ backgroundColor: 0xffffff }}
+          }});
+        }}
+      }} catch (e) {{}}
+      return viewer.loadStructureFromUrl(spec.url, spec.format || "mmcif", false);
     }}).catch(function () {{
       el.textContent = "Structure viewer unavailable.";
     }});
