@@ -259,6 +259,7 @@ def deploy_live_html(
     ttl_days: int | None = None,
     slug: str | None = None,
     retire_slug: str | None = None,
+    extra_files: dict[str, tuple[bytes, str]] | None = None,
 ) -> DeployResult:
     """Upload HTML. Fail-closed if not configured. Optionally retire prior slug."""
     cfg = cfg or load_deploy_config_from_env()
@@ -277,6 +278,10 @@ def deploy_live_html(
         ok, err = _r2_put_object(f"{slug}.html", html.encode("utf-8"))
         if not ok:
             return DeployResult(ok=False, error=f"r2_put_failed:{err}", slug=slug, expires_at=expires_at)
+        for key, (blob, ctype) in (extra_files or {}).items():
+            ok2, err2 = _r2_put_object(key, blob, content_type=ctype)
+            if not ok2:
+                logger.warning("r2 extra put failed key=%s err=%s", key, err2)
     else:
         put_url = _resolve_put_url(cfg, slug)
         if not put_url:
