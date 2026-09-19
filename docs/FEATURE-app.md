@@ -68,7 +68,7 @@ One HTTPS page for **clinicians and scientists** — not two apps.
 - White / serif / minimal; one research-use banner  
 - **No tone bleed:** preprints stay Laboratory; peer-reviewed Evidence stays Clinical  
 - Strip secrets / secret measures / note bodies (counts only)  
-- Binder/ligand: ranked summary + image refs; CIF via download; up to 2 mmCIF in Mol* Structures on live deploy  
+- Binder/ligand: ranked summary + image refs; CIF via download; Mol* mmCIF + 3Dmol ligands (design_csv SMILES / SDF) Structures on live deploy  
 - Missing file → honest “none yet”  
 - Render at `/app` time from sorter files — no new DB  
 - TTL / revoke / redaction unchanged; Discord still no identifier links  

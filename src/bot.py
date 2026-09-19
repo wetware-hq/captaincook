@@ -683,7 +683,7 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif not cfg.configured:
         deploy = app_deploy_mod.DeployResult(ok=False, error="not_configured")
     else:
-        # Re-render with expiry + optional Mol* structure viewers (CIF on R2)
+        # Re-render with expiry + Mol* (CIF) + 3Dmol (ligands) when assets exist
         from datetime import datetime, timedelta, timezone
 
         days = app_deploy_mod.clamp_ttl_days(cfg.ttl_days, cfg)
@@ -692,11 +692,11 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         extra_files: dict[str, tuple[bytes, str]] = {}
         mol_viewers: list[dict[str, Any]] = []
         for i, asset in enumerate(app_html_mod.collect_structure_assets(user_data)):
-            path = asset.get("path")
-            if path is None:
+            cif_path = asset.get("path")
+            if cif_path is None:
                 continue
             try:
-                blob = Path(path).read_bytes()
+                blob = Path(cif_path).read_bytes()
             except OSError:
                 continue
             if not blob or len(blob) > app_html_mod.MAX_CIF_BYTES:
@@ -706,9 +706,48 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             mol_viewers.append(
                 {
                     "id": f"mol-viewer-{i}",
-                    "label": str(asset.get("label") or Path(path).name),
+                    "label": str(asset.get("label") or Path(cif_path).name),
                     "url": f"{cfg.base_url.rstrip('/')}/{key}",
                     "format": "mmcif",
+                }
+            )
+        chem_viewers: list[dict[str, Any]] = []
+        for i, lig in enumerate(app_html_mod.collect_ligand_assets(user_data)):
+            fmt = str(lig.get("format") or "")
+            if fmt == "smi":
+                smiles = str(lig.get("smiles") or "").strip()
+                if not smiles:
+                    continue
+                chem_viewers.append(
+                    {
+                        "id": f"chem-viewer-{i}",
+                        "label": str(lig.get("label") or f"ligand-{i+1}"),
+                        "format": "smi",
+                        "data": smiles,
+                        "is_url": False,
+                    }
+                )
+                continue
+            lig_path = lig.get("path")
+            if lig_path is None:
+                continue
+            try:
+                blob = Path(lig_path).read_bytes()
+            except OSError:
+                continue
+            if not blob or len(blob) > app_html_mod.MAX_CIF_BYTES:
+                continue
+            ext = "sdf" if fmt == "sdf" else "mol"
+            key = f"{slug}-lig{i}.{ext}"
+            ctype = "chemical/x-mdl-sdfile" if ext == "sdf" else "chemical/x-mdl-molfile"
+            extra_files[key] = (blob, ctype)
+            chem_viewers.append(
+                {
+                    "id": f"chem-viewer-{i}",
+                    "label": str(lig.get("label") or Path(lig_path).name),
+                    "format": ext,
+                    "data": f"{cfg.base_url.rstrip('/')}/{key}",
+                    "is_url": True,
                 }
             )
         html = app_html_mod.render_app_html(
@@ -716,6 +755,7 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_id=uid,
             expires_at=expires_at,
             mol_viewers=mol_viewers or None,
+            chem_viewers=chem_viewers or None,
         )
         leaked2 = app_html_mod.html_contains_secrets(html, user_data)
         if leaked2:

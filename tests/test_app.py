@@ -345,10 +345,103 @@ class TestMolstarStructures(unittest.TestCase):
         self.assertNotIn("67", html)
         self.assertNotIn("72.5", html)
 
+
+    def test_collect_ligand_assets_from_design_csv(self):
+        user_data: dict = {}
+        card = parse_load_text("find inhibitor for KRAS G12C")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            csv_path = root / "candidates.csv"
+            csv_path.write_text(
+                "id,smiles,binding_confidence,optimization_score,structure_confidence,"
+                "adme_solubility,adme_lipophilicity,adme_permeability\n"
+                "a,CCO,0.5,0.1,,,,\n"
+                "b,CCN,0.9,0.2,,,,\n"
+                "c,CCC,0.7,0.15,,,,\n"
+                "d,CCCC,0.8,0.05,,,,\n",
+                encoding="utf-8",
+            )
+            files = [{"kind": "design_csv", "path": str(csv_path), "name": "candidates.csv"}]
+            card = attach_last_run(
+                card, kind="small_molecule_design", interpretation="ok", run_id="d1", files=files
+            )
+            store_card(user_data, card)
+            ligs = app_html.collect_ligand_assets(user_data)
+            self.assertEqual(len(ligs), 3)
+            self.assertEqual(ligs[0]["smiles"], "CCN")  # highest binding_confidence
+            self.assertEqual(ligs[0]["format"], "smi")
+
+    def test_render_includes_both_molstar_and_3dmol(self):
+        user_data: dict = {}
+        store_card(user_data, parse_load_text("KRAS G12C"))
+        patient = onboard_mod.empty_patient()
+        patient.update({"age_years": 67, "weight_kg": 72.5, "height_cm": 165.0})
+        onboard_mod.set_patient(user_data, patient)
+        html = app_html.render_app_html(
+            user_data,
+            user_id=1,
+            mol_viewers=[
+                {
+                    "id": "mol-viewer-0",
+                    "label": "boltz.cif",
+                    "url": "https://pub.example/a.cif",
+                    "format": "mmcif",
+                }
+            ],
+            chem_viewers=[
+                {
+                    "id": "chem-viewer-0",
+                    "label": "lig-1",
+                    "format": "smi",
+                    "data": "CCO",
+                    "is_url": False,
+                }
+            ],
+        )
+        self.assertIn("molstar@4.18.0", html)
+        self.assertIn("3dmol@2.4.2", html)
+        self.assertIn("Biological (mmCIF)", html)
+        self.assertIn("Chemical (ligands)", html)
+        self.assertIn("CCO", html)
+        self.assertIn("$3Dmol", html)
+        self.assertNotIn("/workspace/", html)
+        self.assertEqual(app_html.html_contains_secrets(html, user_data), [])
+        self.assertNotIn("67", html)
+
+    def test_sdf_preferred_over_smiles(self):
+        user_data: dict = {}
+        card = parse_load_text("design ligand")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sdf = root / "lig.sdf"
+            sdf.write_text("lig\n  Mrv\n\n  0  0\nM  END\n$$$$\n", encoding="utf-8")
+            csv_path = root / "candidates.csv"
+            csv_path.write_text(
+                "id,smiles,binding_confidence,optimization_score,structure_confidence,"
+                "adme_solubility,adme_lipophilicity,adme_permeability\n"
+                "a,CCO,0.9,0.1,,,,\n",
+                encoding="utf-8",
+            )
+            files = [
+                {"kind": "sdf", "path": str(sdf), "name": "lig.sdf"},
+                {"kind": "design_csv", "path": str(csv_path), "name": "candidates.csv"},
+            ]
+            card = attach_last_run(
+                card, kind="small_molecule_design", interpretation="ok", run_id="d2", files=files
+            )
+            store_card(user_data, card)
+            ligs = app_html.collect_ligand_assets(user_data)
+            self.assertEqual(len(ligs), 1)
+            self.assertEqual(ligs[0]["format"], "sdf")
+            self.assertNotIn("smiles", ligs[0])
+
+
     def test_render_omits_mol_without_viewers(self):
         html = app_html.render_app_html({})
         self.assertNotIn("molstar@", html)
+        self.assertNotIn("3dmol@", html)
         self.assertNotIn("mol-viewer", html)
+        self.assertNotIn("chem-viewer", html)
         self.assertNotIn('id="structures"', html)
 
 

@@ -25,8 +25,10 @@ from .context_card import load_card
 CHART_KEYS = ("hr", "spo2", "temp_c", "glucose_mmol")
 NONE_YET = "None yet."
 MAX_STRUCTURE_VIEWERS = 2
+MAX_LIGAND_VIEWERS = 3
 MAX_CIF_BYTES = 25 * 1024 * 1024
 MOLSTAR_CDN = "https://cdn.jsdelivr.net/npm/molstar@4.18.0/build/viewer"
+THREEDMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js"
 _SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SECRETISH = re.compile(
     r"(?i)\b(age_years|weight_kg|height_cm|bmi|patient_id|secret)\b|"
@@ -267,6 +269,86 @@ def collect_structure_assets(user_data: dict[str, Any] | None) -> list[dict[str,
     return out
 
 
+
+def collect_ligand_assets(user_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Top ligand candidates for 3Dmol (max 3).
+
+    Prefer SDF/MOL artifact files when present; else SMILES from design_csv
+    (ranked by binding_confidence). Returns
+    [{label, format: "sdf"|"mol"|"smi", path?: Path, smiles?: str}, ...].
+    """
+    out: list[dict[str, Any]] = []
+    if not user_data:
+        return out
+    card = load_card(user_data)
+    if card is None or not isinstance(card.last_run, dict):
+        return out
+    files = card.last_run.get("files") or []
+
+    # 1) Prefer discrete ligand structure files
+    for rec in files:
+        if not isinstance(rec, dict):
+            continue
+        kind = str(rec.get("kind") or "").lower().strip()
+        name = str(rec.get("name") or rec.get("filename") or "")
+        raw_path = str(rec.get("path") or "")
+        path = Path(raw_path)
+        suffix = path.suffix.lower()
+        fmt = None
+        if kind in ("sdf", "mol") or suffix == ".sdf":
+            fmt = "sdf" if (kind == "sdf" or suffix == ".sdf") else "mol"
+        elif suffix == ".mol":
+            fmt = "mol"
+        if not fmt or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size <= 0 or path.stat().st_size > MAX_CIF_BYTES:
+                continue
+        except OSError:
+            continue
+        out.append({"label": name or path.name, "format": fmt, "path": path})
+        if len(out) >= MAX_LIGAND_VIEWERS:
+            return out
+
+    if out:
+        return out
+
+    # 2) SMILES from design_csv
+    csv_path: Path | None = None
+    for rec in files:
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("kind") or "") != "design_csv":
+            continue
+        pth = Path(str(rec.get("path") or ""))
+        if pth.is_file():
+            csv_path = pth
+            break
+    if csv_path is None:
+        return out
+    try:
+        from .downloads import read_candidates_csv
+        from .result_photo import rank_candidates
+    except Exception:
+        return out
+    rows = read_candidates_csv(csv_path)
+    ranked = rank_candidates(rows)
+    seen: set[str] = set()
+    for i, cand in enumerate(ranked):
+        smiles = str((cand.get("smiles") if isinstance(cand, dict) else "") or "").strip()
+        if not smiles or smiles in seen:
+            continue
+        # Basic sanity — avoid huge blobs / path-like
+        if len(smiles) > 512 or "/" in smiles or "\\" in smiles:
+            continue
+        seen.add(smiles)
+        label = str(cand.get("id") or f"ligand-{len(out)+1}")
+        out.append({"label": label, "format": "smi", "smiles": smiles})
+        if len(out) >= MAX_LIGAND_VIEWERS:
+            break
+    return out
+
+
 def clinical_blocks(
     user_data: dict[str, Any] | None,
     *,
@@ -428,10 +510,12 @@ def render_app_html(
     user_id: int | str | None = None,
     expires_at: datetime | None = None,
     mol_viewers: list[dict[str, Any]] | None = None,
+    chem_viewers: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build static HTML+JS artifact. Never embeds secret measure or biometric values.
 
-    mol_viewers: optional [{id, label, url, format}] with public HTTPS CIF URLs (mmcif).
+    mol_viewers: bio [{id, label, url, format}] public HTTPS mmCIF URLs (Mol*).
+    chem_viewers: ligands [{id, label, format, data}] — SMILES inline or SDF/MOL URL (3Dmol).
     """
     clin = clinical_blocks(user_data, user_id=user_id)
     lab = laboratory_blocks(user_data, user_id=user_id)
@@ -462,59 +546,72 @@ def render_app_html(
     )
     open_html = _md_to_safe_html(open_q)
 
+    # --- Biological (Mol*) + chemical (3Dmol) structure panels ---
     viewers = [v for v in (mol_viewers or []) if isinstance(v, dict) and v.get("url") and v.get("id")]
     viewers = viewers[:MAX_STRUCTURE_VIEWERS]
+    chem = [
+        v
+        for v in (chem_viewers or [])
+        if isinstance(v, dict) and v.get("id") and v.get("data") and v.get("format")
+    ]
+    chem = chem[:MAX_LIGAND_VIEWERS]
+    has_structures = bool(viewers or chem)
     structures_nav = (
-        '\n    <a href="#structures">Structures</a>' if viewers else ""
+        '\n    <a href="#structures">Structures</a>' if has_structures else ""
     )
     structures_block = ""
     mol_cdn_css = ""
     mol_cdn_js = ""
     mol_init_script = ""
     mol_extra_css = ""
-    if viewers:
+    chem_cdn_js = ""
+    chem_init_script = ""
+    if has_structures:
         mol_extra_css = """
-.mol-viewer {
+.mol-viewer, .chem-viewer {
   width: 100%; height: 360px;
   border: 1px solid var(--rule);
   position: relative;
-  background: #fafafa;
+  background: #ffffff;
 }
-figure.mol-fig { margin: 1.25rem 0; padding: 0; }
-figure.mol-fig figcaption {
+.chem-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+.chem-grid .chem-viewer { height: 280px; }
+figure.mol-fig, figure.chem-fig { margin: 1.25rem 0; padding: 0; }
+figure.mol-fig figcaption, figure.chem-fig figcaption {
   font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 0.8rem; color: var(--muted); margin-bottom: 0.4rem;
 }
 """
-        figs: list[str] = []
-        for v in viewers:
-            vid = _esc(str(v["id"]))
-            label = _esc(str(v.get("label") or "Structure"))
-            figs.append(
-                f'<figure class="mol-fig">'
-                f"<figcaption>{label}</figcaption>"
-                f'<div id="{vid}" class="mol-viewer" '
-                f'style="width:100%;height:360px;border:1px solid var(--rule)"></div>'
-                f"</figure>"
+        parts: list[str] = ['\n    <h3 id="structures">Structures</h3>']
+        if viewers:
+            parts.append('<p class="struct-kind">Biological (mmCIF)</p>')
+            for v in viewers:
+                vid = _esc(str(v["id"]))
+                label = _esc(str(v.get("label") or "Structure"))
+                parts.append(
+                    f'<figure class="mol-fig">'
+                    f"<figcaption>{label}</figcaption>"
+                    f'<div id="{vid}" class="mol-viewer" '
+                    f'style="width:100%;height:360px;border:1px solid var(--rule)"></div>'
+                    f"</figure>"
+                )
+            mol_cdn_css = (
+                f'<link rel="stylesheet" type="text/css" href="{MOLSTAR_CDN}/molstar.css"/>'
             )
-        structures_block = (
-            '\n    <h3 id="structures">Structures</h3>\n    '
-            + "\n    ".join(figs)
-        )
-        mol_cdn_css = (
-            f'<link rel="stylesheet" type="text/css" href="{MOLSTAR_CDN}/molstar.css"/>'
-        )
-        mol_cdn_js = f'<script src="{MOLSTAR_CDN}/molstar.js"></script>'
-        # Safe JSON for init — urls are public HTTPS only
-        payload = [
-            {
-                "id": str(v["id"]),
-                "url": str(v["url"]),
-                "format": str(v.get("format") or "mmcif"),
-            }
-            for v in viewers
-        ]
-        mol_init_script = f"""
+            mol_cdn_js = f'<script src="{MOLSTAR_CDN}/molstar.js"></script>'
+            payload = [
+                {
+                    "id": str(v["id"]),
+                    "url": str(v["url"]),
+                    "format": str(v.get("format") or "mmcif"),
+                }
+                for v in viewers
+            ]
+            mol_init_script = f"""
 <script>
 (function () {{
   var viewers = {json.dumps(payload)};
@@ -547,6 +644,75 @@ figure.mol-fig figcaption {
   }});
 }})();
 </script>"""
+        if chem:
+            parts.append('<p class="struct-kind">Chemical (ligands)</p>')
+            if len(chem) == 1:
+                v = chem[0]
+                vid = _esc(str(v["id"]))
+                label = _esc(str(v.get("label") or "Ligand"))
+                parts.append(
+                    f'<figure class="chem-fig">'
+                    f"<figcaption>{label}</figcaption>"
+                    f'<div id="{vid}" class="chem-viewer" '
+                    f'style="width:100%;height:360px;border:1px solid var(--rule)"></div>'
+                    f"</figure>"
+                )
+            else:
+                cells = []
+                for v in chem:
+                    vid = _esc(str(v["id"]))
+                    label = _esc(str(v.get("label") or "Ligand"))
+                    cells.append(
+                        f'<figure class="chem-fig">'
+                        f"<figcaption>{label}</figcaption>"
+                        f'<div id="{vid}" class="chem-viewer" '
+                        f'style="width:100%;height:280px;border:1px solid var(--rule)"></div>'
+                        f"</figure>"
+                    )
+                parts.append('<div class="chem-grid">' + "".join(cells) + "</div>")
+            chem_cdn_js = f'<script src="{THREEDMOL_CDN}"></script>'
+            chem_payload = [
+                {
+                    "id": str(v["id"]),
+                    "format": str(v["format"]),
+                    "data": str(v["data"]),
+                    "isUrl": bool(v.get("is_url")),
+                }
+                for v in chem
+            ]
+            chem_init_script = f"""
+<script>
+(function () {{
+  var ligands = {json.dumps(chem_payload)};
+  if (typeof $3Dmol === "undefined") {{ return; }}
+  function showLigand(spec, data) {{
+    var el = document.getElementById(spec.id);
+    if (!el) {{ return; }}
+    try {{
+      var viewer = $3Dmol.createViewer(el, {{ backgroundColor: "white" }});
+      viewer.addModel(data, spec.format || "smi");
+      viewer.setStyle({{}}, {{ stick: {{}}, sphere: {{ scale: 0.25 }} }});
+      viewer.zoomTo();
+      viewer.render();
+    }} catch (e) {{
+      el.textContent = "Ligand viewer unavailable.";
+    }}
+  }}
+  ligands.forEach(function (spec) {{
+    if (spec.isUrl) {{
+      fetch(spec.data).then(function (r) {{ return r.text(); }}).then(function (txt) {{
+        showLigand(spec, txt);
+      }}).catch(function () {{
+        var el = document.getElementById(spec.id);
+        if (el) {{ el.textContent = "Ligand viewer unavailable."; }}
+      }});
+    }} else {{
+      showLigand(spec, spec.data);
+    }}
+  }});
+}})();
+</script>"""
+        structures_block = "\n    ".join(parts)
 
     expired_msg = _esc(board_md_mod.MSG_EXPIRED_PAGE)
     banner = _esc(board_md_mod.LIVE_BANNER)
@@ -673,6 +839,7 @@ footer {{
 <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
 <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 {mol_cdn_js}
+{chem_cdn_js}
 <script>
 (function () {{
   var expiresIso = {json.dumps(expires_iso)};
@@ -696,6 +863,7 @@ footer {{
 }})();
 </script>
 {mol_init_script}
+{chem_init_script}
 </body>
 </html>
 """
