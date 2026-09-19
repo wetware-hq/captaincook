@@ -68,7 +68,7 @@ One HTTPS page for **clinicians and scientists** — not two apps.
 - White / serif / minimal; one research-use banner  
 - **No tone bleed:** preprints stay Laboratory; peer-reviewed Evidence stays Clinical  
 - Strip secrets / secret measures / note bodies (counts only)  
-- Binder/ligand: ranked summary + image refs; CIF via download only  
+- Binder/ligand: ranked summary + image refs; CIF via download; up to 3 mmCIF in Mol* Structures on live deploy  
 - Missing file → honest “none yet”  
 - Render at `/app` time from sorter files — no new DB  
 - TTL / revoke / redaction unchanged; Discord still no identifier links  
@@ -112,5 +112,5 @@ LLM layout; secrets in URL; permanent public apps; Chart.js/D3-from-scratch v1; 
 - Spec — biostrategist  
 - Wire rename + HTML + deploy client — biomodels  
 - TTL/host secrets — bioplatform  
-- TEMPLATE-app / COPY — biolang (`docs/TEMPLATE-app.md`)  
+- TEMPLATE-app / COPY — biolang  
 - Visual pass — editor  

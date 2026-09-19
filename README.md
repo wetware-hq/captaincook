@@ -59,7 +59,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set. |
+| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set (Mol* structures for up to 3 mmCIF artifacts). |
 | `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
@@ -102,7 +102,6 @@ Optional:
 - `TELEGRAM_ALLOWED_USER_ID` — restrict the bot to one Telegram user
 - `COMMEC_BIN` / `COMMEC_TIMEOUT_SEC` — local IBBIS `commec` for DNA/RNA bioscreen (fail-closed if missing)
 - `DISCORD_WEBHOOK_URL` — optional outbound `/research` TLDR mirror only (unset = disabled / **not live**; never echoes the URL; never sends clinic or lab files)
-- `APP_DEPLOY_*` — optional `/app` live HTTPS view. Prefer `APP_DEPLOY_PROVIDER=r2` with `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`, `APP_DEPLOY_BUCKET`, `APP_DEPLOY_ENDPOINT` (S3 API), and `APP_DEPLOY_BASE_URL` (public `*.r2.dev`). Alternative: `generic` Bearer PUT/DELETE via Worker (`APP_DEPLOY_PUT_URL` / `APP_DEPLOY_DELETE_URL`). Default TTL 7 days (max 30). Fail-closed → Markdown packet only.
 - `SCRIBE_LLM_URL` / `SCRIBE_LLM_KEY` / `SCRIBE_LLM_MODEL` — optional OpenAI-compatible chat endpoint for `/scribe` (unset = fail-closed)
 - `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` — Modal API tokens for compute-only BindCraft (`/design binder`)
 - `BINDCRAFT_HOME` / `BINDCRAFT_TIMEOUT_SEC` — local BindCraft alternative; unset with Modal missing → binder fail-closed

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src import app_deploy
@@ -283,6 +285,71 @@ class TestCmdAppAliases(unittest.IsolatedAsyncioTestCase):
         u = await self._run(cmd_app, {})
         u.effective_message.reply_text.assert_awaited_once_with(board_md.MSG_REFUSE_APP)
         u.effective_message.reply_document.assert_not_called()
+
+
+
+
+class TestMolstarStructures(unittest.TestCase):
+    def test_collect_structure_assets_max_three(self):
+        user_data: dict = {}
+        card = parse_load_text("KRAS G12C fold")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            files = []
+            for i in range(4):
+                p = root / f"model{i}.cif"
+                p.write_text("data_test\n_entry.id test\n", encoding="utf-8")
+                files.append({"kind": "cif", "path": str(p), "name": p.name})
+            # missing path should be skipped
+            files.append({"kind": "cif", "path": str(root / "gone.cif"), "name": "gone.cif"})
+            files.append({"kind": "fasta", "path": str(root / "x.fasta"), "name": "x.fasta"})
+            card = attach_last_run(
+                card, kind="fold", interpretation="ok", run_id="r1", files=files
+            )
+            store_card(user_data, card)
+            assets = app_html.collect_structure_assets(user_data)
+            self.assertEqual(len(assets), 3)
+            self.assertTrue(all(a["format"] == "mmcif" for a in assets))
+            self.assertTrue(all(a["path"].is_file() for a in assets))
+            self.assertEqual(assets[0]["label"], "model0.cif")
+
+    def test_render_includes_molstar_when_viewers(self):
+        user_data: dict = {}
+        store_card(user_data, parse_load_text("find inhibitor for KRAS G12C"))
+        patient = onboard_mod.empty_patient()
+        patient.update(
+            {"age_years": 67, "sex": "F", "weight_kg": 72.5, "height_cm": 165.0}
+        )
+        onboard_mod.set_patient(user_data, patient)
+        viewers = [
+            {
+                "id": "mol-viewer-0",
+                "label": "boltz.cif",
+                "url": "https://pub.example/r2/abc-mol0.cif",
+                "format": "mmcif",
+            }
+        ]
+        html = app_html.render_app_html(user_data, user_id=1, mol_viewers=viewers)
+        self.assertIn("cdn.jsdelivr.net/npm/molstar@4.18.0/build/viewer/molstar.js", html)
+        self.assertIn("molstar.css", html)
+        self.assertIn('id="mol-viewer-0"', html)
+        self.assertIn('class="mol-viewer"', html)
+        self.assertIn('id="structures"', html)
+        self.assertIn('href="#structures"', html)
+        self.assertIn("loadStructureFromUrl", html)
+        self.assertIn("https://pub.example/r2/abc-mol0.cif", html)
+        self.assertNotIn("/workspace/", html)
+        self.assertNotIn("patient-store/", html)
+        leaked = app_html.html_contains_secrets(html, user_data)
+        self.assertEqual(leaked, [])
+        self.assertNotIn("67", html)
+        self.assertNotIn("72.5", html)
+
+    def test_render_omits_mol_without_viewers(self):
+        html = app_html.render_app_html({})
+        self.assertNotIn("molstar@", html)
+        self.assertNotIn("mol-viewer", html)
+        self.assertNotIn('id="structures"', html)
 
 
 class TestHelpAppPrimary(unittest.TestCase):

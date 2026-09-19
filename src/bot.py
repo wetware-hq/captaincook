@@ -683,24 +683,59 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif not cfg.configured:
         deploy = app_deploy_mod.DeployResult(ok=False, error="not_configured")
     else:
-        # Re-render with expiry once we know TTL window
+        # Re-render with expiry + optional Mol* structure viewers (CIF on R2)
         from datetime import datetime, timedelta, timezone
 
         days = app_deploy_mod.clamp_ttl_days(cfg.ttl_days, cfg)
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
-        html = app_html_mod.render_app_html(
-            user_data, user_id=uid, expires_at=expires_at
-        )
-        try:
-            deploy = app_deploy_mod.deploy_live_html(
-                html,
-                cfg=cfg,
-                ttl_days=days,
-                retire_slug=str(prior_live["slug"]) if prior_live.get("slug") else None,
+        slug = app_deploy_mod.new_slug()
+        extra_files: dict[str, tuple[bytes, str]] = {}
+        mol_viewers: list[dict[str, Any]] = []
+        for i, asset in enumerate(app_html_mod.collect_structure_assets(user_data)):
+            path = asset.get("path")
+            if path is None:
+                continue
+            try:
+                blob = Path(path).read_bytes()
+            except OSError:
+                continue
+            if not blob or len(blob) > app_html_mod.MAX_CIF_BYTES:
+                continue
+            key = f"{slug}-mol{i}.cif"
+            extra_files[key] = (blob, "chemical/x-mmcif")
+            mol_viewers.append(
+                {
+                    "id": f"mol-viewer-{i}",
+                    "label": str(asset.get("label") or Path(path).name),
+                    "url": f"{cfg.base_url.rstrip('/')}/{key}",
+                    "format": "mmcif",
+                }
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("app deploy exception", exc_info=True)
-            deploy = app_deploy_mod.DeployResult(ok=False, error=str(exc))
+        html = app_html_mod.render_app_html(
+            user_data,
+            user_id=uid,
+            expires_at=expires_at,
+            mol_viewers=mol_viewers or None,
+        )
+        leaked2 = app_html_mod.html_contains_secrets(html, user_data)
+        if leaked2:
+            logger.error("app html secret leak blocked (mol): %s", leaked2)
+            deploy = app_deploy_mod.DeployResult(ok=False, error="secret_leak_blocked")
+        else:
+            try:
+                deploy = app_deploy_mod.deploy_live_html(
+                    html,
+                    cfg=cfg,
+                    ttl_days=days,
+                    slug=slug,
+                    extra_files=extra_files or None,
+                    retire_slug=(
+                        str(prior_live["slug"]) if prior_live.get("slug") else None
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("app deploy exception", exc_info=True)
+                deploy = app_deploy_mod.DeployResult(ok=False, error=str(exc))
 
     if deploy.ok and deploy.url and deploy.expires_at:
         live_url = deploy.url

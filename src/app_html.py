@@ -12,6 +12,7 @@ import html
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import board_md as board_md_mod
@@ -23,6 +24,9 @@ from .context_card import load_card
 
 CHART_KEYS = ("hr", "spo2", "temp_c", "glucose_mmol")
 NONE_YET = "None yet."
+MAX_STRUCTURE_VIEWERS = 3
+MAX_CIF_BYTES = 25 * 1024 * 1024
+MOLSTAR_CDN = "https://cdn.jsdelivr.net/npm/molstar@4.18.0/build/viewer"
 _SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SECRETISH = re.compile(
     r"(?i)\b(age_years|weight_kg|height_cm|bmi|patient_id|secret)\b|"
@@ -205,7 +209,7 @@ def _redact_lab_text(text: str) -> str:
         if re.search(r"(?i)(/tmp/|/workspace/|patient-store/|\.cif|\.fasta)\b", line):
             # Replace path lines with download hint, not secret values
             if "artifact" in line.lower() or line.strip().startswith("-"):
-                lines.append("- Structure file available via /download (not embedded).")
+                lines.append("- Structure available via /download; interactive Mol* viewer when /app live view is deployed.")
                 continue
             continue
         if _SECRETISH.search(line) and any(
@@ -214,6 +218,55 @@ def _redact_lab_text(text: str) -> str:
             continue
         lines.append(line)
     return "\n".join(lines).strip()
+
+
+
+def collect_structure_assets(user_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Existing mmCIF paths from last_run for live Mol* viewers (max 3).
+
+    Returns [{label, path: Path, format: "mmcif"}, ...] for files that still exist.
+    Local paths are never written into HTML — callers upload bytes and pass public URLs.
+    """
+    out: list[dict[str, Any]] = []
+    if not user_data:
+        return out
+    card = load_card(user_data)
+    if card is None or not isinstance(card.last_run, dict):
+        return out
+    files = card.last_run.get("files") or []
+    seen: set[str] = set()
+    for rec in files:
+        if not isinstance(rec, dict):
+            continue
+        kind = str(rec.get("kind") or "").lower().strip()
+        name = str(rec.get("name") or "")
+        raw_path = str(rec.get("path") or "")
+        is_cif = kind in ("cif", "mmcif", "structure_cif") or (
+            not kind and (name.lower().endswith(".cif") or raw_path.lower().endswith(".cif"))
+        )
+        if not is_cif:
+            continue
+        path = Path(raw_path)
+        if not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size <= 0 or size > MAX_CIF_BYTES:
+            continue
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = name or path.name
+        out.append({"label": label, "path": path, "format": "mmcif"})
+        if len(out) >= MAX_STRUCTURE_VIEWERS:
+            break
+    return out
 
 
 def clinical_blocks(
@@ -376,8 +429,12 @@ def render_app_html(
     *,
     user_id: int | str | None = None,
     expires_at: datetime | None = None,
+    mol_viewers: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Build static HTML+JS artifact. Never embeds secret measure or biometric values."""
+    """Build static HTML+JS artifact. Never embeds secret measure or biometric values.
+
+    mol_viewers: optional [{id, label, url, format}] with public HTTPS CIF URLs (mmcif).
+    """
     clin = clinical_blocks(user_data, user_id=user_id)
     lab = laboratory_blocks(user_data, user_id=user_id)
     series = chart_series(user_data)
@@ -406,6 +463,85 @@ def render_app_html(
         card=load_card(user_data) if user_data else None,
     )
     open_html = _md_to_safe_html(open_q)
+
+    viewers = [v for v in (mol_viewers or []) if isinstance(v, dict) and v.get("url") and v.get("id")]
+    viewers = viewers[:MAX_STRUCTURE_VIEWERS]
+    structures_nav = (
+        '\n    <a href="#structures">Structures</a>' if viewers else ""
+    )
+    structures_block = ""
+    mol_cdn_css = ""
+    mol_cdn_js = ""
+    mol_init_script = ""
+    mol_extra_css = ""
+    if viewers:
+        mol_extra_css = """
+.mol-viewer {
+  width: 100%; height: 360px;
+  border: 1px solid var(--rule);
+  position: relative;
+  background: #fafafa;
+}
+figure.mol-fig { margin: 1.25rem 0; padding: 0; }
+figure.mol-fig figcaption {
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.8rem; color: var(--muted); margin-bottom: 0.4rem;
+}
+"""
+        figs: list[str] = []
+        for v in viewers:
+            vid = _esc(str(v["id"]))
+            label = _esc(str(v.get("label") or "Structure"))
+            figs.append(
+                f'<figure class="mol-fig">'
+                f"<figcaption>{label}</figcaption>"
+                f'<div id="{vid}" class="mol-viewer" '
+                f'style="width:100%;height:360px;border:1px solid var(--rule)"></div>'
+                f"</figure>"
+            )
+        structures_block = (
+            '\n    <h3 id="structures">Structures</h3>\n    '
+            + "\n    ".join(figs)
+        )
+        mol_cdn_css = (
+            f'<link rel="stylesheet" type="text/css" href="{MOLSTAR_CDN}/molstar.css"/>'
+        )
+        mol_cdn_js = f'<script src="{MOLSTAR_CDN}/molstar.js"></script>'
+        # Safe JSON for init — urls are public HTTPS only
+        payload = [
+            {
+                "id": str(v["id"]),
+                "url": str(v["url"]),
+                "format": str(v.get("format") or "mmcif"),
+            }
+            for v in viewers
+        ]
+        mol_init_script = f"""
+<script>
+(function () {{
+  var viewers = {json.dumps(payload)};
+  if (typeof molstar === "undefined" || !molstar.Viewer) {{ return; }}
+  viewers.forEach(function (spec) {{
+    var el = document.getElementById(spec.id);
+    if (!el) {{ return; }}
+    molstar.Viewer.create(spec.id, {{
+      layoutIsExpanded: false,
+      layoutShowControls: false,
+      layoutShowRemoteState: false,
+      layoutShowSequence: false,
+      layoutShowLog: false,
+      layoutShowLeftPanel: false,
+      viewportShowExpand: false,
+      viewportShowSelectionMode: false,
+      viewportShowAnimation: false
+    }}).then(function (viewer) {{
+      return viewer.loadStructureFromUrl(spec.url, spec.format || "mmcif");
+    }}).catch(function () {{
+      el.textContent = "Structure viewer unavailable.";
+    }});
+  }});
+}})();
+</script>"""
 
     expired_msg = _esc(board_md_mod.MSG_EXPIRED_PAGE)
     banner = _esc(board_md_mod.LIVE_BANNER)
@@ -484,7 +620,9 @@ footer {{
   display: none; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   padding: 2rem 1.25rem; max-width: var(--max); margin: 0 auto;
 }}
+{mol_extra_css}
 </style>
+{mol_cdn_css}
 </head>
 <body>
 <div id="expired"><p>{expired_msg}</p></div>
@@ -493,7 +631,7 @@ footer {{
   <nav class="anchors" aria-label="Sections">
     <a href="#clinical">Clinical</a>
     <a href="#laboratory">Laboratory</a>
-    <a href="#measurements">Measurements</a>
+    <a href="#measurements">Measurements</a>{structures_nav}
   </nav>
   <h1>Case conference packet</h1>
   <section id="context" aria-label="Case context">
@@ -516,7 +654,7 @@ footer {{
   <section id="laboratory">
     <h2>Laboratory</h2>
     <h3>Designs</h3>
-    {designs_html}
+    {designs_html}{structures_block}
     <h3>Preprint literature</h3>
     {preprint_html}
   </section>
@@ -529,6 +667,7 @@ footer {{
 <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
 <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
 <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+{mol_cdn_js}
 <script>
 (function () {{
   var expiresIso = {json.dumps(expires_iso)};
@@ -551,6 +690,7 @@ footer {{
   }});
 }})();
 </script>
+{mol_init_script}
 </body>
 </html>
 """
