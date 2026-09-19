@@ -43,9 +43,13 @@ class DeployConfig:
 
     @property
     def configured(self) -> bool:
-        if not self.token or not self.base_url:
-            return False
         if self.provider in ("", "none", "off"):
+            return False
+        if not self.base_url:
+            return False
+        if self.provider == "r2":
+            return _r2_env() is not None
+        if not self.token:
             return False
         return True
 
@@ -180,6 +184,74 @@ def _resolve_delete_url(cfg: DeployConfig, slug: str) -> str | None:
     return None
 
 
+
+def _r2_env() -> tuple[str, str, str, str] | None:
+    """Return (access_key, secret_key, bucket, endpoint) or None."""
+    access = (os.getenv("R2_ACCESS_KEY_ID") or "").strip()
+    secret = (os.getenv("R2_SECRET_ACCESS_KEY") or "").strip()
+    bucket = (os.getenv("APP_DEPLOY_BUCKET") or os.getenv("R2_BUCKET") or "").strip()
+    endpoint = (
+        os.getenv("APP_DEPLOY_ENDPOINT")
+        or os.getenv("R2_ENDPOINT")
+        or ""
+    ).strip()
+    if access and secret and bucket and endpoint:
+        return access, secret, bucket, endpoint
+    return None
+
+
+def _r2_put_object(key: str, body: bytes, content_type: str = "text/html; charset=utf-8") -> tuple[bool, str]:
+    creds = _r2_env()
+    if not creds:
+        return False, "r2_env_missing"
+    access, secret, bucket, endpoint = creds
+    try:
+        import boto3
+        from botocore.client import Config
+    except ImportError:
+        return False, "boto3_missing"
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access,
+            aws_secret_access_key=secret,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+        s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
+        return True, "ok"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("r2 put failed: %s", exc)
+        return False, str(exc)
+
+
+def _r2_delete_object(key: str) -> tuple[bool, str]:
+    creds = _r2_env()
+    if not creds:
+        return False, "r2_env_missing"
+    access, secret, bucket, endpoint = creds
+    try:
+        import boto3
+        from botocore.client import Config
+    except ImportError:
+        return False, "boto3_missing"
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access,
+            aws_secret_access_key=secret,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+        s3.delete_object(Bucket=bucket, Key=key)
+        return True, "ok"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("r2 delete failed: %s", exc)
+        return False, str(exc)
+
+
 def deploy_live_html(
     html: str,
     *,
@@ -201,20 +273,25 @@ def deploy_live_html(
     if retire_slug and retire_slug != slug:
         revoke_live_slug(retire_slug, cfg=cfg)
 
-    put_url = _resolve_put_url(cfg, slug)
-    if not put_url:
-        return DeployResult(
-            ok=False,
-            error="missing_put_url",
-            slug=slug,
-            expires_at=expires_at,
-        )
+    if cfg.provider == "r2":
+        ok, err = _r2_put_object(f"{slug}.html", html.encode("utf-8"))
+        if not ok:
+            return DeployResult(ok=False, error=f"r2_put_failed:{err}", slug=slug, expires_at=expires_at)
+    else:
+        put_url = _resolve_put_url(cfg, slug)
+        if not put_url:
+            return DeployResult(
+                ok=False,
+                error="missing_put_url",
+                slug=slug,
+                expires_at=expires_at,
+            )
 
-    # Embed expiry already handled by caller in HTML; upload bytes
-    status, body = _http_put(put_url, html.encode("utf-8"), cfg.token)
-    if status < 200 or status >= 300:
-        logger.warning("app deploy PUT failed status=%s body=%s", status, body[:200])
-        return DeployResult(ok=False, error=f"put_failed:{status}", slug=slug, expires_at=expires_at)
+        # Embed expiry already handled by caller in HTML; upload bytes
+        status, body = _http_put(put_url, html.encode("utf-8"), cfg.token)
+        if status < 200 or status >= 300:
+            logger.warning("app deploy PUT failed status=%s body=%s", status, body[:200])
+            return DeployResult(ok=False, error=f"put_failed:{status}", slug=slug, expires_at=expires_at)
 
     url = public_url(cfg, slug, expires_at)
     reg = _load_registry()
@@ -236,10 +313,13 @@ def revoke_live_slug(slug: str | None, *, cfg: DeployConfig | None = None) -> bo
     cfg = cfg or load_deploy_config_from_env()
     deleted_remote = False
     if cfg.configured:
-        del_url = _resolve_delete_url(cfg, slug)
-        if del_url:
-            status, _body = _http_delete(del_url, cfg.token)
-            deleted_remote = 200 <= status < 300 or status == 404
+        if cfg.provider == "r2":
+            deleted_remote, _err = _r2_delete_object(f"{slug}.html")
+        else:
+            del_url = _resolve_delete_url(cfg, slug)
+            if del_url:
+                status, _body = _http_delete(del_url, cfg.token)
+                deleted_remote = 200 <= status < 300 or status == 404
     reg = _load_registry()
     shares = reg.setdefault("shares", {})
     existed = slug in shares

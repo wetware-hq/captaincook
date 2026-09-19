@@ -213,6 +213,7 @@ class TestCmdAppAliases(unittest.IsolatedAsyncioTestCase):
 
     async def test_app_and_board_same_md(self):
         from src.bot import cmd_app, cmd_board
+        from src import app_deploy as app_deploy_mod
 
         user_data: dict = {}
         card = parse_load_text("find inhibitor for KRAS G12C")
@@ -221,8 +222,24 @@ class TestCmdAppAliases(unittest.IsolatedAsyncioTestCase):
         )
         store_card(user_data, card)
 
-        u1 = await self._run(cmd_app, dict(user_data))
-        u2 = await self._run(cmd_board, dict(user_data), args=["update"])
+        # Force fail-closed deploy so this test stays env-independent
+        fake_cfg = app_deploy_mod.DeployConfig(
+            provider="",
+            token="",
+            base_url="",
+            put_url_template="",
+            delete_url_template="",
+            signing_secret="",
+            account_id="",
+            project="",
+            ttl_days=7,
+        )
+        with patch(
+            "src.bot.app_deploy_mod.load_deploy_config_from_env",
+            return_value=fake_cfg,
+        ):
+            u1 = await self._run(cmd_app, dict(user_data))
+            u2 = await self._run(cmd_board, dict(user_data), args=["update"])
 
         u1.effective_message.reply_document.assert_awaited()
         u2.effective_message.reply_document.assert_awaited()
