@@ -48,7 +48,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/view` | Replays the stored photo and caption for a matching completed card. |
 | `/download` | Sends the last-run CIF and, for ligand design, the CSV (binder FASTA/CIF when available). |
 | `/confirm` | Runs the pending ligand or binder job; returns one photo and a research-use caption. |
-| `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` capture. |
+| `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` / `/measure` capture. |
 | `/research <topic>` | Europe PMC preprint brief → Markdown document with Harvard references (≤5). |
 | `/evidence <question>` | Europe PMC peer-reviewed brief (MEDLINE; preprints excluded) → Markdown with Harvard references (≤5). |
 | `/onboard` | Collects biometric secrets one question at a time. |
@@ -61,7 +61,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
 | `/board` | Assembles a Markdown board packet from the current card and patient stores. |
 | `/board update` | Same as `/board` — fresh snapshot of current stores (not an incremental merge). |
-| `/measure` | Paste patient observations onto the card (controlled keys; optional `secret`). `/measure list` / `/measure clear`. Secrets never echoed. Research use only. |
+| `/measure` | Paste patient observations (helper-first; synonym gazetteer; unit convert; optional `secret`). Bad paste coaches with examples + re-arm. `/measure list` / `/measure clear`. Secrets never echoed. Research use only. |
 | `/measure list` | Keys and counts only; secret values never shown. |
 | `/measure clear [key\|all]` | Drop one key series or all measurements on this card. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |

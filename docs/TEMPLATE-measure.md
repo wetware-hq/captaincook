@@ -6,6 +6,23 @@
 
 ## Controlled keys (HELP list)
 
+## Curated abbreviations (HELP — ~10 lines)
+
+| Enter | Means | Stored as |
+| --- | --- | --- |
+| `HR` / `PR` | heart rate | `hr` (bpm) |
+| `BP` | blood pressure | `bp_sys` / `bp_dia` (mmHg) |
+| `RR` | respiratory rate | `rr` (/min) — if enabled on wire |
+| `SpO2` / `O2sat` | oxygen saturation | `spo2` (%) |
+| `T` / `Temp` | temperature | `temp_c` (°C; °F converted) |
+| `Wt` / `Weight` | weight | `weight_kg` |
+| `Ht` / `Height` | height | `height_cm` |
+| `Glu` / `BG` / `BGL` | glucose | `glucose_mmol` (mg/dL converted when unit given) |
+
+`BMI` is derived from weight and height when both exist — do not paste BMI as a primary key. Other labs (`Cr`, `eGFR`, `Na`, `K`, `HbA1c`, `Hb`) use `other:<slug>` or mark `secret`. Unknown lines get a helper reply with these examples.
+
+### Key ids
+
 `hr`, `bp_sys`, `bp_dia`, `weight_kg`, `height_cm`, `temp_c`, `spo2`, `glucose_mmol`  
 Escape: `other:<slug>`. Free keys require `secret` (or are coerced to `other:` — wire documents which).
 
@@ -128,6 +145,59 @@ None yet. Paste observations with /measure.
 ```
 
 Never print secret field values in the board packet.
+
+
+## v1.1 — soft structure (regex gazetteer)
+
+Accepted synonym / messy one-liner examples (still line-shaped; not free paragraphs):
+
+```
+HR was 72
+heart rate 72 bpm
+BP 120 over 80
+blood pressure 120/80
+wt 81.2 kg
+weight 81.2
+temp 37.1 C
+SpO2 98%
+glucose 5.4 mmol
+```
+
+Multi-value on one paste (split on newlines, `;`, or commas):
+
+```
+HR 72; BP 120/80; SpO2 98%
+```
+
+Idempotent: pasting the same `(ts,key,value,device)` twice does not duplicate.
+
+Pure prose → helper-first coach (see above), then re-arm.
+
+HELP add-on:
+
+```
+Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
+```
+
+
+## Helper-first (amended)
+
+Structure comes from the user. On a bad or empty paste, **coach and re-arm** — do not NLP a paragraph into vitals.
+
+```
+I could not read that as measurements. Please send one fact per line, for example:
+HR 72 bpm
+BP 120/80 mmHg
+weight_kg=81.2 secret
+
+Near-miss wording such as “HR was 72” or “BP 120 over 80” is OK. Free paragraphs are not. Send /cancel to stop.
+```
+
+After a partial parse (some lines OK, some not):
+
+```
+Saved {n} measurement(s). I could not read {n_bad} line(s). Please resend those as one fact per line (see /help). Secret values are never shown.
+```
 
 ## Banned
 

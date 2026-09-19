@@ -1,17 +1,22 @@
 """Paste-friendly measurements on the context card (/measure).
 
-Locked behaviour: docs/FEATURE-measure.md.
+Locked behaviour: docs/FEATURE-measure.md + docs/FEATURE-measure-unstructured.md (v1.1).
 Locked copy: docs/TEMPLATE-measure.md (verbatim).
 
 Decision (v1): unknown free keys without the secret flag are coerced to
 other:<slug> (not hard-refused). Free keys with secret=True are kept as-is.
 Secret measure values never appear in list, board, /load dumps, captions,
 HELP, Discord, variant/evidence/trials, or LM prompts — counts only.
+
+v1.1: regex gazetteer for near-miss synonyms; split on ; / newlines / commas;
+unit normalise; idempotent hash (ts,key,value,device); helper-first re-arm on
+zero parses. No free-paragraph NLP. No /measure free (v1.2 dropped).
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
 from datetime import datetime, timezone
@@ -27,6 +32,7 @@ CONTROLLED_KEYS = frozenset(
         "hr",
         "bp_sys",
         "bp_dia",
+        "rr",
         "weight_kg",
         "height_cm",
         "temp_c",
@@ -36,8 +42,10 @@ CONTROLLED_KEYS = frozenset(
 )
 
 # Display / paste aliases → controlled key (BP handled specially).
+# Curated abbrev table: TEMPLATE-measure.md
 _ALIASES: dict[str, str] = {
     "hr": "hr",
+    "pr": "hr",
     "heart_rate": "hr",
     "heartrate": "hr",
     "pulse": "hr",
@@ -47,28 +55,93 @@ _ALIASES: dict[str, str] = {
     "bp_dia": "bp_dia",
     "bpdia": "bp_dia",
     "diastolic": "bp_dia",
+    "rr": "rr",
+    "resp": "rr",
+    "respiratory_rate": "rr",
+    "respiratoryrate": "rr",
     "weight_kg": "weight_kg",
     "weight": "weight_kg",
+    "wt": "weight_kg",
     "height_cm": "height_cm",
     "height": "height_cm",
+    "ht": "height_cm",
     "temp_c": "temp_c",
     "temp": "temp_c",
     "temperature": "temp_c",
+    "t": "temp_c",
     "spo2": "spo2",
     "o2sat": "spo2",
     "glucose_mmol": "glucose_mmol",
     "glucose": "glucose_mmol",
+    "glu": "glucose_mmol",
+    "bg": "glucose_mmol",
+    "bgl": "glucose_mmol",
 }
 
 _DEFAULT_UNITS: dict[str, str] = {
     "hr": "bpm",
     "bp_sys": "mmHg",
     "bp_dia": "mmHg",
+    "rr": "/min",
     "weight_kg": "kg",
     "height_cm": "cm",
     "temp_c": "°C",
     "spo2": "%",
     "glucose_mmol": "mmol/L",
+}
+
+# Labs → other:<slug> (never silent clinical mapping).
+_LAB_SLUGS = frozenset(
+    {"cr", "egfr", "na", "k", "hba1c", "hb", "creatinine", "sodium", "potassium", "hemoglobin", "haemoglobin"}
+)
+
+# BMI is derived — refuse as primary paste key.
+_BMI_KEYS = frozenset({"bmi", "body_mass_index", "bodymassindex"})
+
+# Unit synonym → canonical (lowercase lookup keys).
+_UNIT_SYNONYMS: dict[str, str] = {
+    "bpm": "bpm",
+    "beats": "bpm",
+    "beats/min": "bpm",
+    "beat": "bpm",
+    "mmhg": "mmHg",
+    "mm hg": "mmHg",
+    "kg": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "lb": "lb",
+    "lbs": "lb",
+    "pound": "lb",
+    "pounds": "lb",
+    "cm": "cm",
+    "centimeter": "cm",
+    "centimetre": "cm",
+    "centimeters": "cm",
+    "centimetres": "cm",
+    "in": "in",
+    "inch": "in",
+    "inches": "in",
+    "c": "°C",
+    "°c": "°C",
+    "celsius": "°C",
+    "degc": "°C",
+    "f": "°F",
+    "°f": "°F",
+    "fahrenheit": "°F",
+    "degf": "°F",
+    "%": "%",
+    "percent": "%",
+    "pct": "%",
+    "mmol": "mmol/L",
+    "mmol/l": "mmol/L",
+    "mmoll": "mmol/L",
+    "mg/dl": "mg/dL",
+    "mgdl": "mg/dL",
+    "/min": "/min",
+    "per min": "/min",
+    "permin": "/min",
+    "breaths": "/min",
+    "breaths/min": "/min",
 }
 
 # --- Locked TEMPLATE-measure.md (verbatim) ---
@@ -102,6 +175,33 @@ MSG_BAD_PASTE = (
     "or weight_kg=81.2 secret. Prefer controlled keys "
     "(hr, bp_sys, bp_dia, weight_kg, height_cm, temp_c, spo2, glucose_mmol)."
 )
+# Helper-first coach (TEMPLATE-measure.md — Helper-first amended). Verbatim.
+MSG_HELPER = (
+    "I could not read that as measurements. Please send one fact per line, for example:\n"
+    "HR 72 bpm\n"
+    "BP 120/80 mmHg\n"
+    "weight_kg=81.2 secret\n"
+    "\n"
+    "Near-miss wording such as “HR was 72” or “BP 120 over 80” is OK. "
+    "Free paragraphs are not. Send /cancel to stop."
+)
+MSG_PARTIAL = (
+    "Saved {n} measurement(s). I could not read {n_bad} line(s). "
+    "Please resend those as one fact per line (see /help). "
+    "Secret values are never shown."
+)
+# Missing / ambiguous unit — coach + re-arm (easy to swap when biolang locks copy).
+MSG_NEED_UNIT = (
+    "I recognised that reading but need a unit to store it safely "
+    "(for example °C or °F for temperature; mmol/L or mg/dL for glucose; "
+    "kg or lb for weight). Please resend with the unit. Send /cancel to stop."
+)
+# BMI is derived from weight + height — not a primary paste key.
+MSG_BMI = (
+    "BMI is derived from weight and height on this card — do not paste BMI "
+    "as a primary key. Send weight_kg and height_cm (or Wt / Ht) instead. "
+    "Send /cancel to stop."
+)
 MSG_EMPTY = (
     "No measurements were saved. Please send at least one valid line, or /cancel to stop."
 )
@@ -123,6 +223,13 @@ HELP_COMMANDS = (
     "/measure <lines> — Parse a short paste immediately.\n"
     "/measure list — List keys and counts. Secret measures appear only as a count.\n"
     "/measure clear [key|all] — Clear one key series or all measurements on this card."
+)
+HELP_ADDON = (
+    "Messy one-liners are OK when they clearly name a vital "
+    "(e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.\n"
+    "Abbreviations: HR/PR→hr, BP→bp_sys/bp_dia, RR→rr, SpO2, T/Temp→temp_c, "
+    "Wt/Ht, Glu/BG→glucose_mmol. Labs (Cr, eGFR, Na, K, HbA1c, Hb) → other:<slug>. "
+    "BMI is derived — do not paste it as a primary key."
 )
 
 BOARD_NONE = "None yet. Paste observations with /measure."
@@ -156,6 +263,53 @@ _NUM_UNIT_RE = re.compile(
 _SECRET_TOKEN_RE = re.compile(r"\bsecret(?:\s*=\s*true)?\b", re.IGNORECASE)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# v1.1 gazetteer: near-miss synonym phrases → controlled keys (no LLM).
+_GAZ_HR = re.compile(
+    r"(?i)\b(?:hr|pr|heart\s*rate|heartrate|pulse)\b"
+    r"(?:\s+was|\s+is|\s*[:=])?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>bpm|beats(?:\s*/\s*min)?|beat)?"
+)
+_GAZ_BP = re.compile(
+    r"(?i)\b(?:bp|blood\s*pressure|bloodpressure)\b\s*[:=]?\s*"
+    r"(?P<sys>\d+(?:\.\d+)?)\s*(?:/|over)\s*(?P<dia>\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>mm\s*hg|mmhg)?"
+)
+_GAZ_RR = re.compile(
+    r"(?i)\b(?:rr|resp(?:iratory)?(?:\s*rate)?)\b"
+    r"(?:\s+was|\s+is|\s*[:=])?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>/\s*min|per\s*min|breaths(?:\s*/\s*min)?)?"
+)
+_GAZ_WT = re.compile(
+    r"(?i)\b(?:wt|weight)(?:\s*_?\s*kg)?\b\s*[:=]?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>kg|kilograms?|lb|lbs|pounds?)?"
+)
+_GAZ_HT = re.compile(
+    r"(?i)\b(?:ht|height)(?:\s*_?\s*cm)?\b\s*[:=]?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>cm|centimet(?:er|re)s?|in(?:ch(?:es)?)?)?"
+)
+_GAZ_TEMP = re.compile(
+    r"(?i)\b(?:temp(?:erature)?|temp_c|(?<![A-Za-z])t(?![A-Za-z]))\b\s*[:=]?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>°?\s*[cf]|celsius|fahrenheit|deg(?:rees?)?\s*[cf])?"
+)
+_GAZ_SPO2 = re.compile(
+    r"(?i)\b(?:spo2|o2\s*sat(?:uration)?|o2sat)\b\s*[:=]?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>%|percent|pct)?"
+)
+_GAZ_GLU = re.compile(
+    r"(?i)\b(?:glucose|glucose_mmol|glu|bg|bgl)\b\s*[:=]?\s*"
+    r"(?P<num>[-+]?\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>mmol(?:\s*/\s*l)?|mmoll|mg\s*/\s*dl|mgdl)?"
+)
+_GAZ_BMI = re.compile(
+    r"(?i)\b(?:bmi|body\s*mass\s*index)\b"
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -165,6 +319,96 @@ def _slugify(raw: str) -> str:
     s = (raw or "").strip().lower().replace(":", "_")
     s = _SLUG_RE.sub("_", s).strip("_")
     return s or "unknown"
+
+
+def _parse_num(num_s: str) -> int | float:
+    if "." in num_s:
+        return float(num_s)
+    return int(num_s)
+
+
+def normalise_unit(raw: str | None, *, key: str | None = None) -> str | None:
+    """Map unit synonyms to canonical forms (bpm, mmHg, kg, cm, °C, %, mmol/L)."""
+    if raw is None:
+        return None
+    s = re.sub(r"\s+", " ", str(raw).strip().lower())
+    s = s.replace("° ", "°")
+    if s in _UNIT_SYNONYMS:
+        return _UNIT_SYNONYMS[s]
+    # Strip spaces for mm hg / mmol / l
+    compact = s.replace(" ", "")
+    if compact in _UNIT_SYNONYMS:
+        return _UNIT_SYNONYMS[compact]
+    if key and key in _DEFAULT_UNITS and not s:
+        return _DEFAULT_UNITS[key]
+    return raw.strip() if raw.strip() else None
+
+
+
+def convert_value_unit(key: str, value: Any, unit: str | None) -> tuple[Any, str | None, str | None]:
+    """Apply obvious unit conversions into controlled storage units.
+
+    Returns (value, unit, err) where err is 'need_unit' | None.
+    """
+    norm = normalise_unit(unit, key=key)
+
+    # Temperature: °F → °C
+    if key == "temp_c":
+        if norm == "°F":
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return value, norm, None
+            c = round((f - 32.0) * 5.0 / 9.0, 2)
+            return c, "°C", None
+        if norm is None and isinstance(value, (int, float)) and float(value) > 45:
+            return value, None, "need_unit"
+        if norm is None:
+            return value, _DEFAULT_UNITS["temp_c"], None
+        return value, norm, None
+
+    # Glucose: mg/dL → mmol/L
+    if key == "glucose_mmol":
+        if norm == "mg/dL":
+            try:
+                mg = float(value)
+            except (TypeError, ValueError):
+                return value, norm, None
+            mmol = round(mg / 18.0182, 2)
+            return mmol, "mmol/L", None
+        if norm is None and isinstance(value, (int, float)) and float(value) >= 40:
+            return value, None, "need_unit"
+        if norm is None:
+            return value, _DEFAULT_UNITS["glucose_mmol"], None
+        return value, norm, None
+
+    # Weight: lb → kg
+    if key == "weight_kg":
+        if norm == "lb":
+            try:
+                lb = float(value)
+            except (TypeError, ValueError):
+                return value, norm, None
+            kg = round(lb / 2.20462, 2)
+            return kg, "kg", None
+        if norm is None:
+            return value, _DEFAULT_UNITS["weight_kg"], None
+        return value, norm, None
+
+    # Height: inches → cm
+    if key == "height_cm":
+        if norm == "in":
+            try:
+                inches = float(value)
+            except (TypeError, ValueError):
+                return value, norm, None
+            cm = round(inches * 2.54, 1)
+            return cm, "cm", None
+        if norm is None:
+            return value, _DEFAULT_UNITS["height_cm"], None
+        return value, norm, None
+
+    return value, norm, None
 
 
 def coerce_key(raw_key: str, *, secret: bool) -> str:
@@ -187,6 +431,16 @@ def coerce_key(raw_key: str, *, secret: bool) -> str:
         return slug
     # Decision: coerce unknown free key without secret → other:<slug>
     return f"other:{slug}"
+
+
+def measurement_hash(entry: dict[str, Any]) -> str:
+    """Idempotent identity: (ts, key, value, device)."""
+    ts = entry.get("ts") or ""
+    key = entry.get("key") or ""
+    value = entry.get("value")
+    device = entry.get("device") or ""
+    payload = f"{ts}|{key}|{value}|{device}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def card_present(user_data: dict[str, Any]) -> bool:
@@ -248,10 +502,9 @@ def _parse_value_unit(val: str) -> tuple[Any, str | None]:
     if m:
         num_s = m.group("num")
         unit = (m.group("unit") or "").strip() or None
+        unit = normalise_unit(unit)
         try:
-            if "." in num_s:
-                return float(num_s), unit
-            return int(num_s), unit
+            return _parse_num(num_s), unit
         except ValueError:
             return val, unit
     return val, None
@@ -267,6 +520,13 @@ def _make_entry(
     ts: str,
     source: str = "paste",
 ) -> dict[str, Any]:
+    if not key.startswith("other:"):
+        value, unit, err = convert_value_unit(key, value, unit)
+        if err == "need_unit":
+            # Sentinel consumed by parsers; never persisted.
+            return {"__need_unit__": True, "key": key, "value": value, "unit": unit}
+    else:
+        unit = normalise_unit(unit, key=key)
     if unit is None and key in _DEFAULT_UNITS and not key.startswith("other:"):
         unit = _DEFAULT_UNITS[key]
     return {
@@ -286,10 +546,10 @@ def _parse_bp_pair(
     m = _BP_RE.match(val.strip())
     if not m:
         return None
-    unit = (m.group("unit") or "").strip() or "mmHg"
+    unit = normalise_unit((m.group("unit") or "").strip() or "mmHg") or "mmHg"
     try:
-        sys_v: Any = float(m.group("sys")) if "." in m.group("sys") else int(m.group("sys"))
-        dia_v: Any = float(m.group("dia")) if "." in m.group("dia") else int(m.group("dia"))
+        sys_v: Any = _parse_num(m.group("sys"))
+        dia_v: Any = _parse_num(m.group("dia"))
     except ValueError:
         return None
     return [
@@ -302,34 +562,106 @@ def _parse_bp_pair(
     ]
 
 
+def _gazetteer_parse(
+    text: str,
+    *,
+    secret: bool,
+    device: str | None,
+    ts: str,
+) -> list[dict[str, Any]]:
+    """Cheap near-miss synonym extract. Empty if no gazetteer hit.
+
+    May return a single sentinel dict with __need_unit__ or __bmi__.
+    """
+    rest = (text or "").strip()
+    if not rest:
+        return []
+
+    if _GAZ_BMI.search(rest) and re.search(r"\d", rest):
+        return [{"__bmi__": True}]
+
+    m = _GAZ_BP.search(rest)
+    if m:
+        unit = normalise_unit((m.group("unit") or "").strip() or "mmHg") or "mmHg"
+        try:
+            sys_v = _parse_num(m.group("sys"))
+            dia_v = _parse_num(m.group("dia"))
+        except ValueError:
+            return []
+        return [
+            _make_entry(
+                key="bp_sys", value=sys_v, unit=unit, device=device, secret=secret, ts=ts
+            ),
+            _make_entry(
+                key="bp_dia", value=dia_v, unit=unit, device=device, secret=secret, ts=ts
+            ),
+        ]
+
+    for pattern, key in (
+        (_GAZ_HR, "hr"),
+        (_GAZ_RR, "rr"),
+        (_GAZ_WT, "weight_kg"),
+        (_GAZ_HT, "height_cm"),
+        (_GAZ_TEMP, "temp_c"),
+        (_GAZ_SPO2, "spo2"),
+        (_GAZ_GLU, "glucose_mmol"),
+    ):
+        m = pattern.search(rest)
+        if not m:
+            continue
+        try:
+            num = _parse_num(m.group("num"))
+        except ValueError:
+            continue
+        unit_raw = (m.group("unit") or "").strip() or None
+        return [
+            _make_entry(
+                key=key,
+                value=num,
+                unit=unit_raw,
+                device=device,
+                secret=secret,
+                ts=ts,
+            )
+        ]
+    return []
+
+
 def _parse_one_line(
     line: str,
     *,
     sticky_device: str | None,
     sticky_ts: str | None,
-) -> tuple[list[dict[str, Any]], str | None, str | None]:
-    """Return (entries, new_sticky_device, new_sticky_ts). Device-only lines yield []."""
+) -> tuple[list[dict[str, Any]], str | None, str | None, bool]:
+    """Return (entries, new_sticky_device, new_sticky_ts, attempted).
+
+    attempted=True when the segment looked like a measurement attempt (for n_bad).
+    Device-only / blank / comment → attempted=False.
+    """
     raw = (line or "").strip()
     if not raw or raw.startswith("#"):
-        return [], sticky_device, sticky_ts
+        return [], sticky_device, sticky_ts, False
 
     ts = sticky_ts or _now()
     rest = raw
     iso_m = _ISO_PREFIX_RE.match(rest)
     if iso_m:
         ts = iso_m.group("ts").replace(" ", "T")
-        if ts.endswith("Z"):
-            pass
         rest = rest[iso_m.end() :].strip()
         sticky_ts = ts
 
     rest, secret = _strip_secret(rest)
     if not rest:
-        return [], sticky_device, sticky_ts
+        return [], sticky_device, sticky_ts, False
 
     dev_m = _DEVICE_RE.match(rest)
     if dev_m:
-        return [], dev_m.group(1).strip(), sticky_ts
+        return [], dev_m.group(1).strip(), sticky_ts, False
+
+    # v1.1 gazetteer first (near-miss synonyms).
+    gaz = _gazetteer_parse(rest, secret=secret, device=sticky_device, ts=ts)
+    if gaz:
+        return gaz, sticky_device, sticky_ts, True
 
     # key=value or KEY value …
     key_raw: str | None = None
@@ -345,17 +677,21 @@ def _parse_one_line(
             val_raw = sp.group("val").strip()
 
     if not key_raw or val_raw is None:
-        return [], sticky_device, sticky_ts
+        # Unparseable free text → attempted failure (helper / n_bad).
+        return [], sticky_device, sticky_ts, True
 
-    key_low = key_raw.lower()
+    key_low = key_raw.lower().replace("-", "_")
+    # BMI is derived — never store as primary key.
+    if key_low in _BMI_KEYS:
+        return [{"__bmi__": True}], sticky_device, sticky_ts, True
     # BP special: BP 120/80
     if key_low in ("bp", "blood_pressure", "bloodpressure"):
         pair = _parse_bp_pair(
             val_raw, secret=secret, device=sticky_device, ts=ts
         )
         if pair:
-            return pair, sticky_device, sticky_ts
-        return [], sticky_device, sticky_ts
+            return pair, sticky_device, sticky_ts, True
+        return [], sticky_device, sticky_ts, True
 
     known = (
         key_low in _ALIASES
@@ -367,14 +703,17 @@ def _parse_one_line(
     used_kv = bool(kv)
     if not known and not used_kv:
         if not re.match(r"^[-+]?\d", val_raw.strip()):
-            return [], sticky_device, sticky_ts
+            return [], sticky_device, sticky_ts, True
 
     key = coerce_key(key_raw, secret=secret)
     value, unit = _parse_value_unit(val_raw)
+    # Controlled / known keys must resolve to a number (avoid "HR was 72" → "was 72").
+    if known and key in CONTROLLED_KEYS and not isinstance(value, (int, float)):
+        return [], sticky_device, sticky_ts, True
     # Reject non-numeric free-text values for uncontrolled keys without = form digit.
     if not known and not isinstance(value, (int, float)):
         if not used_kv:
-            return [], sticky_device, sticky_ts
+            return [], sticky_device, sticky_ts, True
     return (
         [
             _make_entry(
@@ -388,7 +727,32 @@ def _parse_one_line(
         ],
         sticky_device,
         sticky_ts,
+        True,
     )
+
+
+def _split_segments(text: str) -> list[str]:
+    """Split paste on newlines, semicolons, and commas into measure segments."""
+    segments: list[str] = []
+    for line in (text or "").splitlines() or [text or ""]:
+        line = line.strip()
+        if not line:
+            continue
+        for semi in line.split(";"):
+            semi = semi.strip()
+            if not semi:
+                continue
+            if "," in semi:
+                # Comma-separated vitals: "HR 72, BP 120/80, SpO2 98%"
+                # Avoid splitting bare CSV header rows (handled by tabular path).
+                chunks = [c.strip() for c in semi.split(",") if c.strip()]
+                if len(chunks) > 1 and all(
+                    re.search(r"[A-Za-z]", c) and re.search(r"\d", c) for c in chunks
+                ):
+                    segments.extend(chunks)
+                    continue
+            segments.append(semi)
+    return segments
 
 
 def _try_tabular(text: str) -> list[dict[str, Any]] | None:
@@ -397,7 +761,6 @@ def _try_tabular(text: str) -> list[dict[str, Any]] | None:
     if len(lines) < 2:
         return None
     sample = lines[0]
-    dialect = None
     if "\t" in sample:
         delim = "\t"
     elif sample.count(",") >= 1:
@@ -423,7 +786,7 @@ def _try_tabular(text: str) -> list[dict[str, Any]] | None:
             secret = str(norm.get("secret") or "").lower() in ("1", "true", "yes", "secret")
             device = norm.get("device") or None
             ts = norm.get("ts") or norm.get("timestamp") or _now()
-            unit = norm.get("unit") or None
+            unit = normalise_unit(norm.get("unit") or None)
             key_low = key_raw.lower()
             if key_low in ("bp", "blood_pressure") or "/" in val_raw:
                 pair = _parse_bp_pair(val_raw, secret=secret, device=device, ts=ts)
@@ -449,37 +812,103 @@ def _try_tabular(text: str) -> list[dict[str, Any]] | None:
 
 def parse_paste(text: str) -> list[dict[str, Any]]:
     """Parse multi-line paste into measurement entries. May be empty."""
-    tabular = _try_tabular(text)
-    if tabular is not None:
-        return tabular
-    entries: list[dict[str, Any]] = []
-    sticky_device: str | None = None
-    sticky_ts: str | None = None
-    for line in (text or "").splitlines():
-        got, sticky_device, sticky_ts = _parse_one_line(
-            line, sticky_device=sticky_device, sticky_ts=sticky_ts
-        )
-        entries.extend(got)
+    entries, _n_bad, _special = parse_paste_with_stats(text)
     return entries
 
 
+def parse_paste_with_stats(
+    text: str,
+) -> tuple[list[dict[str, Any]], int, str | None]:
+    """Parse paste; return (entries, n_bad_segments, special_err).
+
+    special_err is 'need_unit' | 'bmi' | None (takes priority when zero entries).
+    """
+    tabular = _try_tabular(text)
+    if tabular is not None:
+        return tabular, 0, None
+    entries: list[dict[str, Any]] = []
+    sticky_device: str | None = None
+    sticky_ts: str | None = None
+    n_bad = 0
+    saw_need_unit = False
+    saw_bmi = False
+    for segment in _split_segments(text):
+        got, sticky_device, sticky_ts, attempted = _parse_one_line(
+            segment, sticky_device=sticky_device, sticky_ts=sticky_ts
+        )
+        if not got:
+            if attempted:
+                n_bad += 1
+            continue
+        clean: list[dict[str, Any]] = []
+        for item in got:
+            if item.get("__need_unit__"):
+                saw_need_unit = True
+                continue
+            if item.get("__bmi__"):
+                saw_bmi = True
+                continue
+            clean.append(item)
+        if clean:
+            entries.extend(clean)
+        elif attempted and not (saw_need_unit or saw_bmi):
+            n_bad += 1
+    special: str | None = None
+    if not entries:
+        if saw_need_unit:
+            special = "need_unit"
+        elif saw_bmi:
+            special = "bmi"
+    elif saw_need_unit or saw_bmi:
+        # Mixed: count unresolved as bad lines for partial message.
+        n_bad += int(saw_need_unit) + int(saw_bmi)
+    return entries, n_bad, special
+
+
+def _dedupe_append(
+    existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Skip rows whose (ts,key,value,device) hash already exists."""
+    seen = {measurement_hash(m) for m in existing}
+    out: list[dict[str, Any]] = []
+    for m in incoming:
+        h = measurement_hash(m)
+        if h in seen:
+            continue
+        seen.add(h)
+        out.append(m)
+    return out
+
+
 def append_measurements(user_data: dict[str, Any], text: str) -> str:
-    """Parse paste and append to card. Disarms on success or hard refuse."""
+    """Parse paste and append to card. Helper + re-arm on zero parses."""
     if not card_present(user_data):
         end_measure(user_data)
         return MSG_NO_CARD
     body = (text or "").strip()
     if not body:
+        arm_measure(user_data)
         return MSG_EMPTY
-    parsed = parse_paste(body)
+    parsed, n_bad, special = parse_paste_with_stats(body)
     if not parsed:
-        return MSG_BAD_PASTE
+        arm_measure(user_data)
+        if special == "need_unit":
+            return MSG_NEED_UNIT
+        if special == "bmi":
+            return MSG_BMI
+        # Fail-closed: helper coach + re-arm (no invent).
+        return MSG_HELPER
     items = get_measurements(user_data)
-    items.extend(parsed)
+    fresh = _dedupe_append(items, parsed)
+    items.extend(fresh)
     set_measurements(user_data, items)
+    n_secret = sum(1 for m in fresh if m.get("secret"))
+    if n_bad:
+        # Partial save: keep armed so user can resend bad lines.
+        arm_measure(user_data)
+        return MSG_PARTIAL.format(n=len(fresh), n_bad=n_bad)
     end_measure(user_data)
-    n_secret = sum(1 for m in parsed if m.get("secret"))
-    return MSG_SAVED.format(n=len(parsed), n_secret=n_secret)
+    return MSG_SAVED.format(n=len(fresh), n_secret=n_secret)
 
 
 def _fmt_value(m: dict[str, Any]) -> str:

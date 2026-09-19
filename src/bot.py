@@ -137,6 +137,7 @@ Commands:
 /measure — Paste patient observations onto the current card (HR, BP, weight_kg=…, optional secret). /measure list shows keys; secret values are never shown. Research use only; not a diagnosis.
 /measure list — List keys and counts. Secret measures appear only as a count.
 /measure clear [key|all] — Clear one key series or all measurements on this card.
+Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.

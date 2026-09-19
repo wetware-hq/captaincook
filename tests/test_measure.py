@@ -230,3 +230,100 @@ class TestBoardNone(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMeasureV11Gazetteer(unittest.TestCase):
+    def _card(self) -> dict:
+        user_data: dict = {}
+        store_card(user_data, ContextCard(raw_text="case", intent="fold"))
+        return user_data
+
+    def test_hr_was_72(self):
+        user_data = self._card()
+        reply = measure_mod.append_measurements(user_data, "HR was 72")
+        self.assertTrue(reply.startswith("Saved "))
+        items = measure_mod.get_measurements(user_data)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["key"], "hr")
+        self.assertEqual(items[0]["value"], 72)
+        self.assertEqual(items[0]["unit"], "bpm")
+
+    def test_bp_over(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "BP 120 over 80")
+        keys = {m["key"]: m["value"] for m in measure_mod.get_measurements(user_data)}
+        self.assertEqual(keys["bp_sys"], 120)
+        self.assertEqual(keys["bp_dia"], 80)
+
+    def test_pr_rr_aliases(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "PR 70\nRR 16")
+        keys = {m["key"]: m["value"] for m in measure_mod.get_measurements(user_data)}
+        self.assertEqual(keys["hr"], 70)
+        self.assertEqual(keys["rr"], 16)
+
+    def test_temp_f_converts(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "temp 98.6 F")
+        m = measure_mod.get_measurements(user_data)[0]
+        self.assertEqual(m["key"], "temp_c")
+        self.assertEqual(m["unit"], "°C")
+        self.assertAlmostEqual(float(m["value"]), 37.0, places=1)
+
+    def test_glu_mgdl_converts(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "Glu 100 mg/dL")
+        m = measure_mod.get_measurements(user_data)[0]
+        self.assertEqual(m["key"], "glucose_mmol")
+        self.assertEqual(m["unit"], "mmol/L")
+        self.assertAlmostEqual(float(m["value"]), 5.55, places=2)
+
+    def test_multi_split_semicolon(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "HR 72; BP 120/80; SpO2 98%")
+        keys = {m["key"] for m in measure_mod.get_measurements(user_data)}
+        self.assertEqual(keys, {"hr", "bp_sys", "bp_dia", "spo2"})
+
+    def test_pure_prose_helper_rearm(self):
+        user_data = self._card()
+        reply = measure_mod.append_measurements(
+            user_data,
+            "The patient felt better after a long walk in the park today.",
+        )
+        self.assertEqual(reply, measure_mod.MSG_HELPER)
+        self.assertTrue(measure_mod.is_armed(user_data))
+        self.assertEqual(measure_mod.get_measurements(user_data), [])
+
+    def test_bmi_refused(self):
+        user_data = self._card()
+        reply = measure_mod.append_measurements(user_data, "BMI 24.5")
+        self.assertEqual(reply, measure_mod.MSG_BMI)
+        self.assertTrue(measure_mod.is_armed(user_data))
+        self.assertEqual(measure_mod.get_measurements(user_data), [])
+
+    def test_missing_unit_temp_asks(self):
+        user_data = self._card()
+        reply = measure_mod.append_measurements(user_data, "temp 98.6")
+        self.assertEqual(reply, measure_mod.MSG_NEED_UNIT)
+        self.assertTrue(measure_mod.is_armed(user_data))
+
+    def test_lab_to_other(self):
+        user_data = self._card()
+        measure_mod.append_measurements(user_data, "Cr 1.2")
+        items = measure_mod.get_measurements(user_data)
+        self.assertEqual(items[0]["key"], "other:cr")
+
+    def test_double_paste_idempotent(self):
+        user_data = self._card()
+        with patch.object(measure_mod, "_now", return_value="2026-09-20T08:00:00+00:00"):
+            measure_mod.append_measurements(user_data, "HR was 72")
+            measure_mod.append_measurements(user_data, "HR was 72")
+        self.assertEqual(len(measure_mod.get_measurements(user_data)), 1)
+
+    def test_helper_strings_verbatim(self):
+        self.assertIn("I could not read that as measurements.", measure_mod.MSG_HELPER)
+        self.assertIn("HR 72 bpm", measure_mod.MSG_HELPER)
+        self.assertIn("weight_kg=81.2 secret", measure_mod.MSG_HELPER)
+        self.assertIn("/cancel", measure_mod.MSG_HELPER)
+        self.assertIn("I could not read {n_bad} line(s)", measure_mod.MSG_PARTIAL)
+        self.assertIn("Messy one-liners are OK", measure_mod.HELP_ADDON)

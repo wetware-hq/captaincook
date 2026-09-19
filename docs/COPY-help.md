@@ -48,3 +48,9 @@ Ligand design (/design ligand) requires at least ten molecules (about US$0.25) a
 /measure list — List keys and counts. Secret measures appear only as a count.
 /measure clear [key|all] — Clear one key series or all measurements on this card.
 ```
+
+## `/measure` v1.1 examples (HELP)
+
+```
+Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
+```
