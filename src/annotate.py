@@ -36,8 +36,9 @@ DEFAULT_CLASSIFYCNV_TIMEOUT_SEC = 120
 # --- Locked TEMPLATE-annotate-cnv.md (verbatim) ---
 HELP_ONE_LINER = (
     "/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) "
-    "for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; "
-    "not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved."
+    "with GRCh38 or GRCh37 tagged for ACMG/ClinGen-style annotation. Helper coaches "
+    "bad paste or missing assembly. Research use only; not a diagnosis. Runs after "
+    "the biosecurity screen when DNA/RNA is involved."
 )
 
 MSG_ARMED = (
@@ -46,8 +47,23 @@ MSG_ARMED = (
     "chr12:25205246-25250929 DUP\n"
     "Or paste BED / VCF-SV lines.\n"
     "\n"
+    "Include the genome build when you can (GRCh38 preferred; GRCh37 accepted). Example:\n"
+    "##assembly=GRCh38\n"
+    "chr17:43044295-43125483 DEL\n"
+    "\n"
     "Amino-acid sequences cannot be annotated as chromosomal CNVs here. "
     "Research use only; this is not a diagnosis. Send /cancel to stop."
+)
+
+MSG_MISSING_ASSEMBLY = (
+    "Please name the genome build (GRCh38 or GRCh37) on the first line, then your "
+    "BED or VCF-SV intervals. Chromosomal bars cannot be placed safely without a build."
+)
+
+MSG_FASTA_REFUSE = (
+    "FASTA or raw nucleotide sequence cannot be used as a chromosome path here. "
+    "Paste BED, VCF-SV, or chr:start-end DEL|DUP intervals with ##assembly=GRCh38 "
+    "(or GRCh37), not a sequence canvas."
 )
 
 MSG_SAVED = (
@@ -347,6 +363,37 @@ def _extract_sequence_blob(text: str) -> str | None:
             best = s
     return best.upper() if best else None
 
+
+
+_ASSEMBLY_RE = re.compile(
+    r"(?im)^(?:##\s*)?assembly\s*[=:]\s*(GRCh38|GRCh37|hg38|hg19)\b"
+)
+
+
+def extract_assembly(text: str) -> str | None:
+    """Return ClassifyCNV build hg38|hg19 from ##assembly=… or None if missing."""
+    m = _ASSEMBLY_RE.search(text or "")
+    if not m:
+        return None
+    raw = m.group(1).upper()
+    if raw in ("GRCH38", "HG38"):
+        return "hg38"
+    if raw in ("GRCH37", "HG19"):
+        return "hg19"
+    return None
+
+
+def looks_fasta_as_chromosome(text: str) -> bool:
+    """True when paste looks like FASTA / nt canvas without CNV interval lines."""
+    if parse_cnv_lines(text or ""):
+        return False
+    raw = text or ""
+    if re.search(r"(?m)^>\S+", raw):
+        return True
+    compact = re.sub(r"[^ACGTUacgtu]", "", raw)
+    if len(compact) >= 80 and len(compact) >= 0.6 * max(1, len(re.sub(r"\s+", "", raw))):
+        return True
+    return False
 
 def looks_aa_only(text: str) -> bool:
     """True when paste is protein alphabet without any CNV interval lines."""
@@ -761,11 +808,20 @@ def process_paste(
         end_annotate(user_data)
         return MSG_AA_ONLY, None, None, "aa"
 
+    if looks_fasta_as_chromosome(raw):
+        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+        return MSG_FASTA_REFUSE, None, None, "fasta"
+
     intervals = parse_cnv_lines(raw)
     if not intervals:
         # Pure prose / bad paste → helper + re-arm
         user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
         return MSG_HELPER, None, None, "helper"
+
+    build = extract_assembly(raw)
+    if build is None:
+        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+        return MSG_MISSING_ASSEMBLY, None, None, "assembly"
 
     gate_result = bioscreen_for_paste(raw)
     if gate_result.decision is Decision.BLOCK:
@@ -783,7 +839,7 @@ def process_paste(
         return MSG_TOOL_DOWN, None, gate_result, "tool"
 
     try:
-        results = run_classifycnv(intervals, genome_build=genome_build)
+        results = run_classifycnv(intervals, genome_build=build)
     except RuntimeError:
         end_annotate(user_data)
         return MSG_TOOL_DOWN, None, gate_result, "tool"

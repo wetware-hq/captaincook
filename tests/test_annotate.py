@@ -218,3 +218,48 @@ class TestAppStrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAssembly(unittest.TestCase):
+    def test_extract_grch38(self):
+        self.assertEqual(
+            annotate_mod.extract_assembly("##assembly=GRCh38\nchr12:1-100 DUP"),
+            "hg38",
+        )
+
+    def test_extract_grch37(self):
+        self.assertEqual(
+            annotate_mod.extract_assembly("##assembly=GRCh37\nchr12:1-100 DEL"),
+            "hg19",
+        )
+
+    def test_missing_assembly_helper(self):
+        ud = {"context_card": None}
+        from src.context_card import ContextCard, store_card
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        reply, results, gate, status = annotate_mod.process_paste(
+            ud, "chr12:25205246-25250929 DUP"
+        )
+        self.assertEqual(status, "assembly")
+        self.assertIn("genome build", reply)
+        self.assertTrue(annotate_mod.is_armed(ud))
+
+    def test_fasta_refuse(self):
+        ud = {}
+        from src.context_card import ContextCard, store_card
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        fasta = ">chr12\n" + ("ACGT" * 40)
+        reply, results, gate, status = annotate_mod.process_paste(ud, fasta)
+        self.assertEqual(status, "fasta")
+        self.assertIn("FASTA", reply)
+
+
+class TestSeqTableToggle(unittest.TestCase):
+    def test_strip_has_seq_table(self):
+        src = Path("src/app_html.py").read_text()
+        self.assertIn(">SEQ</button>", src)
+        self.assertIn(">TABLE</button>", src)
+        self.assertIn("SEQ", src)
+        self.assertIn("TABLE", src)
