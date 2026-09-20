@@ -11,6 +11,7 @@ from pathlib import Path
 from src.bioscreen import (
     REFUSE_BLOCK_SCREENED,
     REFUSE_BLOCK_TOOL,
+    REFUSE_BLOCK_NOT_CONFIGURED,
     REFUSE_REVIEW_AMBIGUOUS,
     REFUSE_REVIEW_INCONCLUSIVE,
     Decision,
@@ -124,7 +125,9 @@ class TestGateWithFakeCommec(unittest.TestCase):
         result = gate(DNA50, bin_name="/nonexistent/no-commec-here", timeout_sec=5)
         self.assertEqual(result.decision, Decision.BLOCK)
         self.assertEqual(result.screen, "commec_missing")
-        self.assertEqual(refuse_message(result), REFUSE_BLOCK_TOOL)
+        self.assertEqual(refuse_message(result), REFUSE_BLOCK_NOT_CONFIGURED)
+        self.assertIn("COMMEC_BIN", refuse_message(result))
+        self.assertNotIn("try again shortly", refuse_message(result).lower())
 
     def test_commec_timeout_blocks(self):
         fake = _write_fake_commec(self.tmpdir, "hang")
@@ -167,14 +170,17 @@ class TestGateWithFakeCommec(unittest.TestCase):
         for s in (
             REFUSE_BLOCK_SCREENED,
             REFUSE_BLOCK_TOOL,
+            REFUSE_BLOCK_NOT_CONFIGURED,
             REFUSE_REVIEW_AMBIGUOUS,
             REFUSE_REVIEW_INCONCLUSIVE,
         ):
             self.assertTrue(s[0].isupper(), s)
             self.assertTrue(s.endswith("."), s)
-            self.assertNotIn("commec", s.lower())
             self.assertNotIn("SOC", s)
             self.assertNotIn("50", s)  # no bp cutoff dump
+            # Operator-facing COMMEC_BIN is allowed only on the not-configured string.
+            if s is not REFUSE_BLOCK_NOT_CONFIGURED:
+                self.assertNotIn("commec", s.lower())
 
 
 class TestEnvConfig(unittest.TestCase):

@@ -44,6 +44,10 @@ REFUSE_BLOCK_TOOL = (
     "so no structure or design job was started. Please try again shortly, or "
     "contact the operator if the problem continues."
 )
+REFUSE_BLOCK_NOT_CONFIGURED = (
+    "This request cannot proceed. The biosecurity screen is not configured on "
+    "this host (COMMEC_BIN), so annotation was not started."
+)
 REFUSE_REVIEW_AMBIGUOUS = (
     "This request needs a clearer sequence before any compute can run. Please "
     "send an unambiguous DNA or RNA string, or a protein sequence on the "
@@ -324,7 +328,9 @@ def refuse_message(result: GateResult | None = None) -> str:
         return REFUSE_REVIEW_INCONCLUSIVE
     if screen == "commec_soc":
         return REFUSE_BLOCK_SCREENED
-    if screen in ("commec_missing", "commec_timeout", "commec_crash", "commec_unknown"):
+    if screen == "commec_missing":
+        return REFUSE_BLOCK_NOT_CONFIGURED
+    if screen in ("commec_timeout", "commec_crash", "commec_unknown"):
         return REFUSE_BLOCK_TOOL
     # Fallback by decision
     if result.decision is Decision.REVIEW:

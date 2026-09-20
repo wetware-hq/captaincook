@@ -18,7 +18,16 @@ Every refuse is the same shape: what happened → what it means → what to do n
 This request cannot be fulfilled. The sequence did not pass the pre-compute biosecurity screen, and no structure or design job was started. Research use only; this agent does not support misuse.
 ```
 
-### `BLOCK` — tool down / timeout / unknown (fail-closed)
+
+### `BLOCK` — not configured (COMMEC_BIN missing)
+
+```
+This request cannot proceed. The biosecurity screen is not configured on this host (COMMEC_BIN), so annotation was not started.
+```
+
+Use this **only** for `commec_missing`. Do not reuse the transient tool-down string — missing binary is a host configuration problem, not a retryable screen failure.
+
+### `BLOCK` — tool down / timeout / unknown (fail-closed; not missing binary)
 
 ```
 This request cannot proceed. The biosecurity screen did not complete safely, so no structure or design job was started. Please try again shortly, or contact the operator if the problem continues.
