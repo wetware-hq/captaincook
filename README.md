@@ -64,7 +64,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | One-shot `/annotate chr12:25205246-25250929 DUP` (GRCh38 default); or arm then paste. BED/VCF-SV advanced. ClassifyCNV → clinic Chromosomal + `/app` SEQ↔TABLE. Card required. Not a diagnosis; Discord dark. |
+| `/annotate` | Three intakes: one-shot coords (GRCh38 default), raw sequence → secure card SEQUENCE (length+hash), or upload FASTA/FASTQ/VCF/BED (refuse BAM/CRAM). ClassifyCNV Chromosomal + `/app` SEQ↔TABLE. Card required. Not a diagnosis; Discord dark. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 
