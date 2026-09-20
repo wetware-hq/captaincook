@@ -1413,7 +1413,7 @@ footer {{
 .parts-chip {{
   flex: 0 0 auto;
   font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 0.8rem; border: 1px solid var(--rule); border-radius: 999px;
+  font-size: 0.8rem; border: 1px solid var(--rule); border-radius: 1.25rem;
   background: #f3f6f8; color: var(--ink);
   padding: 0.35rem 0.75rem; cursor: pointer; white-space: nowrap;
 }}

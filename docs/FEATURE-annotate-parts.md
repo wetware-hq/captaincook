@@ -88,3 +88,24 @@ Notify user in this room **once all** are true:
 4. Discord dark throughout
 
 Owners: bioplatform posts the notify; biolang README; biomodels wire.
+
+## Telegram test commands (post-ship — one per line)
+
+Paste in order after `/start` (or with an active card). One command per Telegram message.
+
+```
+/load annotate a short bacterial construct DNA ATGCGTACGTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG
+/annotate parts
+/app
+/annotate chr17:43044295-43125483 DEL
+/app
+```
+
+AA refuse check (separate card or after clear):
+
+```
+/load sequence MTEYKLVVVGACGVGKSALTIQLIQ
+/annotate parts
+```
+
+Expect: DNA path → length+hash+counts then Laboratory Parts; AA → refuse invent; coords `/annotate` → Chromosomal only.

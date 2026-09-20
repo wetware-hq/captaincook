@@ -59,7 +59,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (**SEQ** horizontal labeled CNV chips + **TABLE** toggle; tap → ACMG breakdown; GRCh38/37). **Laboratory** includes Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
+| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (**SEQ** CNV chips + **TABLE**; tap → ACMG). **Laboratory** includes **Parts** (SEQ class-count chips + TABLE from `/annotate parts`; no seq body) and Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
 | `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
