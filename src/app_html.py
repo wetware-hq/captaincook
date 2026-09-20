@@ -42,6 +42,17 @@ def _esc(s: str) -> str:
     return html.escape(s or "", quote=True)
 
 
+
+def _json_script_payload(obj: Any) -> str:
+    """JSON for <script type=application/json>. Do not html-escape (breaks JSON.parse).
+
+    Only neutralize literal closing-script sequences in values.
+    """
+    raw = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    return raw.replace("</", "<\\/")
+
+
+
 def _section_body(md: str, header: str) -> str:
     matches = list(_SECTION_RE.finditer(md or ""))
     for i, m in enumerate(matches):
@@ -539,7 +550,7 @@ def chromosomal_strip_html(
         return f'<p class="empty">{_esc(NONE_YET)}</p>'
 
     chroms = sorted({str(c.get("chrom") or "") for c in cnvs if c.get("chrom")})
-    payload = json.dumps(cnvs, ensure_ascii=False)
+    payload = _json_script_payload(cnvs)
     chrom_opts = "".join(
         f'<option value="{_esc(c)}">{_esc(c)}</option>' for c in chroms
     )
@@ -654,7 +665,7 @@ def chromosomal_strip_html(
   Research use only; not a diagnosis.</p>
   <button type="button" id="cnv-panel-close">Close</button>
 </aside>
-<script type="application/json" id="cnv-data">{_esc(payload)}</script>
+<script type="application/json" id="cnv-data">{payload}</script>
 """
 
 
@@ -738,7 +749,10 @@ def chromosomal_strip_js() -> str:
   document.querySelectorAll(".cnv-bar").forEach(bindOpen);
   document.querySelectorAll(".cnv-tr").forEach(bindOpen);
 
-  if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
+  if (closeBtn) closeBtn.addEventListener("click", function () {
+    panel.hidden = true;
+    document.querySelectorAll(".parts-tr").forEach(function (tr) { tr.classList.remove("is-selected"); });
+  });
 
   function setView(mode) {
     var isSeq = mode === "seq";
@@ -861,7 +875,7 @@ def parts_strip_html(user_data: dict[str, Any] | None) -> str:
             f"</tr>"
         )
 
-    payload = json.dumps(features, ensure_ascii=False)
+    payload = _json_script_payload(features)
     footer = _esc(PARTS_PANEL_FOOTER)
 
     return f"""
@@ -900,7 +914,7 @@ def parts_strip_html(user_data: dict[str, Any] | None) -> str:
   <p class="parts-panel-hint">{footer}</p>
   <button type="button" id="parts-panel-close">Close</button>
 </aside>
-<script type="application/json" id="parts-data">{_esc(payload)}</script>
+<script type="application/json" id="parts-data">{payload}</script>
 """
 
 
@@ -935,6 +949,9 @@ def parts_strip_js() -> str:
       ? (f.start + "–" + f.end + (f.strand && f.strand !== "." ? " (" + f.strand + ")" : ""))
       : "—");
     prodEl.textContent = "Product: " + (f.label || "—");
+    document.querySelectorAll(".parts-tr").forEach(function (tr) {
+      tr.classList.toggle("is-selected", tr.getAttribute("data-id") === String(f.id || ""));
+    });
     panel.hidden = false;
   }
 
@@ -1439,6 +1456,7 @@ footer {{
 }}
 .parts-tr {{ cursor: pointer; }}
 .parts-tr:hover {{ background: #fafafa; }}
+.parts-tr.is-selected {{ background: #eef3f7; outline: 1px solid var(--rule); }}
 .parts-panel {{
   font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px;
