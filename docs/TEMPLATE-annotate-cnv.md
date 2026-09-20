@@ -102,6 +102,12 @@ This request cannot proceed. Chromosomal annotation needs DNA or RNA intervals, 
 This request cannot proceed. The pre-compute biosecurity screen blocked this sequence, so chromosomal annotation was not started.
 ```
 
+**commec missing (`COMMEC_BIN`) — REFUSE-bioscreen “not configured”:**
+
+```
+This request cannot proceed. The biosecurity screen is not configured on this host (COMMEC_BIN), so annotation was not started.
+```
+
 **Tool down:**
 
 ```

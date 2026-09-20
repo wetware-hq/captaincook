@@ -46,10 +46,10 @@ def _esc(s: str) -> str:
 def _json_script_payload(obj: Any) -> str:
     """JSON for <script type=application/json>. Do not html-escape (breaks JSON.parse).
 
-    Only neutralize literal closing-script sequences in values.
+    Escape only literal '</' so values cannot close the script tag.
     """
     raw = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-    return raw.replace("</", "<\\/")
+    return raw.replace("</", "\\u003c/")
 
 
 
@@ -749,10 +749,7 @@ def chromosomal_strip_js() -> str:
   document.querySelectorAll(".cnv-bar").forEach(bindOpen);
   document.querySelectorAll(".cnv-tr").forEach(bindOpen);
 
-  if (closeBtn) closeBtn.addEventListener("click", function () {
-    panel.hidden = true;
-    document.querySelectorAll(".parts-tr").forEach(function (tr) { tr.classList.remove("is-selected"); });
-  });
+  if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
 
   function setView(mode) {
     var isSeq = mode === "seq";
@@ -985,7 +982,10 @@ def parts_strip_js() -> str:
     });
   });
 
-  if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
+  if (closeBtn) closeBtn.addEventListener("click", function () {
+    panel.hidden = true;
+    document.querySelectorAll(".parts-tr").forEach(function (tr) { tr.classList.remove("is-selected"); });
+  });
 
   function setView(mode) {
     var isSeq = mode === "seq";

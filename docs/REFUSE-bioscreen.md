@@ -48,7 +48,7 @@ This request cannot proceed without further review. The sequence is incomplete o
 ## Do not say
 
 - Fragments: “Blocked.” “REVIEW.” “commec fail.”  
-- Internals: binary paths, exit codes, score tables, regulated-agent names, exact bp cutoffs.  
+- Internals: full filesystem paths, exit codes, score tables, regulated-agent names, exact bp cutoffs. (Exception: name `COMMEC_BIN` / `Bakta` only in the not-configured refuses so operators know what to install.)  
 - Soft openers that invite argument: “Sorry, but…” / “Looks risky…”
 
 ## Acceptance (copy)

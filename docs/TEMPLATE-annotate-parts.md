@@ -70,13 +70,25 @@ This request cannot proceed. Parts annotation needs a DNA or RNA sequence on the
 This request cannot proceed. Genetic-parts annotation does not invent features from an amino-acid sequence. Load or upload DNA or RNA instead.
 ```
 
-**commec BLOCK:**
+**commec BLOCK (screened concern):**
 
 ```
 This request cannot proceed. The pre-compute biosecurity screen blocked this sequence, so parts annotation was not started.
 ```
 
-**Tool down:**
+**commec missing (`COMMEC_BIN`) — use REFUSE-bioscreen “not configured”:**
+
+```
+This request cannot proceed. The biosecurity screen is not configured on this host (COMMEC_BIN), so annotation was not started.
+```
+
+**Bakta missing (`BAKTA_HOME` / not on PATH) — keep MSG_BAKTA_MISSING:**
+
+```
+This request cannot proceed. The Bakta annotation service is not available on this host (set BAKTA_HOME / install bakta + database). No parts were written.
+```
+
+**Tool down (binary present; runtime failure — not missing):**
 
 ```
 This request cannot proceed. The parts annotation service did not respond safely, so no brief was written. Please try again shortly.

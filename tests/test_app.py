@@ -289,6 +289,86 @@ class TestCmdAppAliases(unittest.IsolatedAsyncioTestCase):
 
 
 
+
+class TestJsonScriptPayload(unittest.TestCase):
+    def test_json_script_payload_escapes_script_close(self):
+        from src.app_html import _json_script_payload
+        import json
+        raw = _json_script_payload([{"x": "</script>", "y": 'q"q'}])
+        self.assertNotIn("</script>", raw)
+        self.assertIn("\\u003c/", raw)  # one backslash + u003c in payload text
+        self.assertNotIn("&quot;", raw)
+        self.assertEqual(json.loads(raw)[0]["x"], "</script>")
+        self.assertEqual(json.loads(raw)[0]["y"], 'q"q')
+
+    def test_parts_data_not_html_escaped(self):
+        from src import app_html as ah
+        from src import annotate_parts as ap
+        features = [
+            {"id": "f1", "type": "CDS", "start": 1, "end": 10, "label": 'toxin "x"', "strand": "+"},
+            {"id": "f2", "type": "misc_feature", "start": 11, "end": 20, "label": "</script>evil", "strand": "."},
+        ]
+        orig = ap.get_parts_public
+        try:
+            ap.get_parts_public = lambda ud: {
+                "features": features,
+                "counts": {"CDS": 1, "misc_feature": 1},
+                "seq_meta": {"length": 20, "hash12": "abcdabcdabcd", "kind": "dna"},
+            }
+            html_out = ah.parts_strip_html({})
+        finally:
+            ap.get_parts_public = orig
+        self.assertIn('id="parts-data"', html_out)
+        import re, json
+        m = re.search(
+            r'<script type="application/json" id="parts-data">(.*?)</script>',
+            html_out,
+            re.S,
+        )
+        self.assertIsNotNone(m)
+        blob = m.group(1)
+        self.assertNotIn("&quot;", blob)
+        self.assertNotIn("&lt;", blob)
+        parsed = json.loads(blob)
+        self.assertEqual(parsed[0]["label"], 'toxin "x"')
+        self.assertEqual(parsed[1]["label"], "</script>evil")
+
+    def test_cnv_data_not_html_escaped(self):
+        from src import app_html as ah
+        from src import annotate as an
+        cnvs = [{
+            "id": "c1", "chrom": "chr12", "start": 1, "end": 100,
+            "svtype": "DUP", "classification": "likely pathogenic",
+            "genes": ["KRAS"], "criteria": [{"code": "1A", "text": "demo"}],
+            "label": 'say "hi"',
+        }]
+        orig = an.get_cnv_public
+        try:
+            an.get_cnv_public = lambda ud: cnvs
+            html_out = ah.chromosomal_strip_html({})
+        finally:
+            an.get_cnv_public = orig
+        self.assertIn('id="cnv-data"', html_out)
+        import re, json
+        m = re.search(
+            r'<script type="application/json" id="cnv-data">(.*?)</script>',
+            html_out,
+            re.S,
+        )
+        self.assertIsNotNone(m)
+        blob = m.group(1)
+        self.assertNotIn("&quot;", blob)
+        parsed = json.loads(blob)
+        self.assertEqual(parsed[0]["label"], 'say "hi"')
+
+    def test_parts_selected_row_style_present(self):
+        from src import app_html as ah
+        css = ah.render_app_html  # ensure module loads
+        src = Path(ah.__file__).read_text(encoding="utf-8")
+        self.assertIn(".parts-tr.is-selected", src)
+        self.assertIn('classList.toggle("is-selected"', src)
+
+
 class TestMolstarStructures(unittest.TestCase):
     def test_collect_structure_assets_max_two(self):
         user_data: dict = {}
