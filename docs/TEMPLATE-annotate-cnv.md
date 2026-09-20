@@ -11,6 +11,10 @@
 ```
 
 
+## Dual intake + file upload
+
+Also: Telegram **document** after `/annotate` — FASTA/FASTQ (size-capped) / VCF-SV / BED. Refuse BAM/CRAM. Same security (length+hash in chat).
+
 ## Dual intake
 
 - **Coords** → Chromosomal / ACMG (GRCh38 default).

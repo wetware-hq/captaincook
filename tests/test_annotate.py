@@ -279,3 +279,33 @@ class TestSeqTableToggle(unittest.TestCase):
         self.assertIn(">TABLE</button>", src)
         self.assertIn("SEQ", src)
         self.assertIn("TABLE", src)
+
+
+class TestUpload(unittest.TestCase):
+    def test_refuse_bam(self):
+        self.assertEqual(annotate_mod.classify_upload_name("x.bam"), "bam")
+        ud = {}
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        reply, results, gate, status = annotate_mod.process_upload(ud, "x.bam", b"BAM\x01")
+        self.assertEqual(status, "bam")
+        self.assertIn("BAM", reply)
+
+    def test_bed_upload_coords(self):
+        ud = {}
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        bed = b"chr12\t25205246\t25250929\tDUP\n"
+        reply, results, gate, status = annotate_mod.process_upload(ud, "cnv.bed", bed)
+        self.assertEqual(status, "ok")
+        self.assertTrue(results)
+
+    def test_fa_aa_upload_seq(self):
+        ud = {}
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        aa = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVKLD"
+        data = (">x\n" + aa).encode()
+        reply, results, gate, status = annotate_mod.process_upload(ud, "x.fa", data)
+        self.assertEqual(status, "seq")
+        self.assertIn("sha256", reply.lower())

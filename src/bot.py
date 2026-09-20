@@ -141,7 +141,7 @@ Commands:
 /measure list — List keys and counts. Secret measures appear only as a count.
 /measure clear [key|all] — Clear one key series or all measurements on this card.
 Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
-/annotate — One-shot: `/annotate chr12:25205246-25250929 DUP` (GRCh38 default). Or /annotate then paste. BED/VCF-SV advanced. Helper coaches bad paste. Research use only; not a diagnosis.
+/annotate — One-shot coords, paste sequence, or upload FASTA/FASTQ/VCF/BED (GRCh38 default; refuse BAM/CRAM). Research use only; not a diagnosis.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
@@ -2083,6 +2083,71 @@ async def _run_scribe(
 
 
 
+
+async def on_annotate_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Third /annotate intake: document upload when armed. Never Discord."""
+    if not await _authorized(update, context):
+        return
+    if not annotate_mod.is_armed(context.user_data):
+        return
+    message = update.effective_message
+    assert message is not None
+    doc = message.document
+    if doc is None:
+        return
+    filename = doc.file_name or "upload.bin"
+    # Telegram file size hint (bytes)
+    if doc.file_size and doc.file_size > annotate_mod.ANNOTATE_MAX_VCF_BED_BYTES:
+        await message.reply_text(annotate_mod.MSG_UPLOAD_OVERSIZE)
+        return
+    try:
+        tg_file = await context.bot.get_file(doc.file_id)
+        data = bytes(await tg_file.download_as_bytearray())
+    except Exception:
+        await message.reply_text(annotate_mod.MSG_TOOL_DOWN)
+        return
+    brief, results, gate_result, status = await asyncio.to_thread(
+        annotate_mod.process_upload, context.user_data, filename, data
+    )
+    if status == "ok" and results is not None:
+        from io import BytesIO
+        caption = annotate_mod.success_caption(len(results))
+        buf = BytesIO(brief.encode("utf-8"))
+        await message.reply_document(
+            document=buf,
+            filename="chromosomal-annotation.md",
+            caption=caption[:1024],
+        )
+        await message.reply_text(caption)
+        cnv_ids = [r.interval.cnv_id() for r in results]
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_ANNOTATE,
+            {
+                "cnv_ids": cnv_ids,
+                "n_intervals": len(results),
+                "classifications": [r.classification for r in results],
+                "brief_md": brief,
+                "upload_name": filename,
+                "bioscreen_decision": (
+                    gate_result.decision.value if gate_result else "PASS"
+                ),
+                "patient_id": _patient_id_from_user_data(context.user_data),
+            },
+        )
+        return
+    if status in ("block", "review") and gate_result is not None:
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_BIOSECURITY,
+            {
+                "decision": gate_result.decision.value,
+                "patient_id": _patient_id_from_user_data(context.user_data),
+            },
+        )
+    await message.reply_text(brief)
+
+
 async def cmd_annotate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """CNV/SV paste → ClassifyCNV ACMG brief. Orthogonal bioscreen. No Discord."""
     if not await _authorized(update, context):
@@ -2499,6 +2564,7 @@ def main() -> None:
     application.add_handler(CommandHandler("board", cmd_board))
     application.add_handler(CommandHandler("trials", cmd_trials))
     application.add_handler(CommandHandler("scribe", cmd_scribe))
+    application.add_handler(MessageHandler(filters.Document.ALL, on_annotate_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     logger.info("Starting long-polling bot (research-use only)…")

@@ -35,9 +35,7 @@ DEFAULT_CLASSIFYCNV_TIMEOUT_SEC = 120
 
 # --- Locked TEMPLATE-annotate-cnv.md (verbatim) ---
 HELP_ONE_LINER = (
-    "/annotate — One-shot: `/annotate chr12:25205246-25250929 DUP` (GRCh38 default). "
-    "Or /annotate then paste coords or a sequence. BED/VCF-SV advanced. "
-    "Research use only; not a diagnosis."
+    "/annotate — One-shot coords, paste sequence, or upload FASTA/FASTQ/VCF/BED (GRCh38 default; refuse BAM/CRAM). Research use only; not a diagnosis."
 )
 
 MSG_ARMED = (
@@ -46,7 +44,7 @@ MSG_ARMED = (
     "\n"
     "Or paste a DNA/RNA/AA sequence to store on the card (length + hash only in chat). "
     "GRCh38 is the default for intervals (add ##assembly=GRCh37 only if needed). "
-    "BED / VCF-SV multi-line paste also works. "
+    "BED / VCF-SV multi-line paste also works. You can also upload FASTA, FASTQ, VCF, or BED (not BAM/CRAM). "
     "Research use only; this is not a diagnosis. Send /cancel to stop."
 )
 
@@ -55,6 +53,28 @@ MSG_FASTA_REFUSE = (
     "Use `/annotate chr12:25205246-25250929 DUP`, or paste plain sequence "
     "(no `>` headers) to store length + hash on the card."
 )
+
+
+MSG_UPLOAD_REFUSE_BAM = (
+    "BAM and CRAM uploads are not accepted for /annotate. "
+    "Please upload FASTA, FASTQ, VCF-SV, or BED (size-capped)."
+)
+
+MSG_UPLOAD_OVERSIZE = (
+    "That file is too large for /annotate. "
+    "Please use a smaller FASTA/FASTQ (≤2 MB) or VCF/BED (≤5 MB), or paste intervals."
+)
+
+MSG_UPLOAD_BAD_TYPE = (
+    "Unsupported file type for /annotate. "
+    "Accepted: FASTA, FASTQ, VCF-SV, BED. BAM/CRAM are refused."
+)
+
+ANNOTATE_MAX_FASTA_BYTES = 2 * 1024 * 1024
+ANNOTATE_MAX_FASTQ_BYTES = 2 * 1024 * 1024
+ANNOTATE_MAX_VCF_BED_BYTES = 5 * 1024 * 1024
+ANNOTATE_FASTQ_MAX_READS = 500
+
 
 MSG_SAVED = (
     "Chromosomal annotation complete: {n} interval(s). Research use only; "
@@ -838,6 +858,111 @@ def store_sequence_on_card(
     store_card(user_data, card)
     return kind, digest[:12]
 
+
+
+def classify_upload_name(filename: str) -> str | None:
+    """Return kind: fasta|fastq|vcf|bed|bam|cram|None."""
+    name = (filename or "").lower().strip()
+    for suf, kind in (
+        (".bam", "bam"),
+        (".cram", "cram"),
+        (".fastq.gz", "fastq"),
+        (".fq.gz", "fastq"),
+        (".fastq", "fastq"),
+        (".fq", "fastq"),
+        (".fasta.gz", "fasta"),
+        (".fa.gz", "fasta"),
+        (".fna.gz", "fasta"),
+        (".fasta", "fasta"),
+        (".fa", "fasta"),
+        (".fna", "fasta"),
+        (".vcf.gz", "vcf"),
+        (".vcf", "vcf"),
+        (".bed.gz", "bed"),
+        (".bed", "bed"),
+    ):
+        if name.endswith(suf):
+            return kind
+    return None
+
+
+def _decode_upload(data: bytes) -> str:
+    for enc in ("utf-8", "latin-1"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _fastq_to_sequence_blob(text: str, max_reads: int = ANNOTATE_FASTQ_MAX_READS) -> str:
+    """Concatenate first N FASTQ read sequences (no qualities)."""
+    lines = (text or "").splitlines()
+    seqs: list[str] = []
+    i = 0
+    while i + 1 < len(lines) and len(seqs) < max_reads:
+        if lines[i].startswith("@"):
+            seqs.append(lines[i + 1].strip())
+            i += 4
+        else:
+            i += 1
+    return "".join(seqs)
+
+
+def _vcf_assembly_hint(text: str) -> str | None:
+    for line in (text or "").splitlines()[:80]:
+        if line.startswith("##reference=") or "GRCh38" in line or "hg38" in line:
+            if "37" in line or "hg19" in line.lower() or "GRCh37" in line:
+                return "hg19"
+            return "hg38"
+        if "GRCh37" in line or "hg19" in line:
+            return "hg19"
+    return None
+
+
+def process_upload(
+    user_data: dict[str, Any],
+    filename: str,
+    data: bytes,
+) -> tuple[str, list[CnvResult] | None, GateResult | None, str | None]:
+    """Third intake: Telegram document → coords or SEQUENCE. Discord dark."""
+    if load_card(user_data) is None:
+        end_annotate(user_data)
+        return MSG_NO_CARD, None, None, "no_card"
+
+    kind = classify_upload_name(filename)
+    if kind in ("bam", "cram"):
+        end_annotate(user_data)
+        return MSG_UPLOAD_REFUSE_BAM, None, None, "bam"
+    if kind is None:
+        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+        return MSG_UPLOAD_BAD_TYPE, None, None, "bad_type"
+
+    n = len(data or b"")
+    if kind in ("fasta", "fastq") and n > ANNOTATE_MAX_FASTA_BYTES:
+        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+        return MSG_UPLOAD_OVERSIZE, None, None, "oversize"
+    if kind in ("vcf", "bed") and n > ANNOTATE_MAX_VCF_BED_BYTES:
+        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+        return MSG_UPLOAD_OVERSIZE, None, None, "oversize"
+
+    text = _decode_upload(data or b"")
+    if kind == "fastq":
+        blob = _fastq_to_sequence_blob(text)
+        if not blob:
+            user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+            return MSG_HELPER, None, None, "helper"
+        return process_paste(user_data, blob)
+    if kind == "fasta":
+        return process_paste(user_data, text)
+    if kind in ("vcf", "bed"):
+        # Prefer header assembly; else default GRCh38 via process_paste
+        hint = _vcf_assembly_hint(text) if kind == "vcf" else None
+        if hint == "hg19" and "##assembly=" not in text.lower():
+            text = "##assembly=GRCh37\n" + text
+        return process_paste(user_data, text)
+    user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+    return MSG_UPLOAD_BAD_TYPE, None, None, "bad_type"
 
 
 def process_paste(
