@@ -21,3 +21,10 @@ boltz-experiments/
 *.png
 !docs/**/*.png
 patient-store/
+
+# ClassifyCNV data (clone full Genotek/ClassifyCNV or set CLASSIFYCNV_HOME)
+third_party/ClassifyCNV/Resources/
+third_party/ClassifyCNV/__pycache__/
+third_party/ClassifyCNV/cc_*/
+third_party/ClassifyCNV/smoke_*/
+third_party/ClassifyCNV/Examples/1000Genomes.*

@@ -40,6 +40,7 @@ from .context_card import (
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import measure as measure_mod
+from . import annotate as annotate_mod
 from . import board_md as board_md_mod
 from . import app_html as app_html_mod
 from . import app_deploy as app_deploy_mod
@@ -129,7 +130,7 @@ Commands:
 /download — Send the structure file, and the design table if present, from the last run on the current card.
 /view — Show the stored photograph and description for this card, if a matching completed run exists. No new computation is started.
 /confirm — Begin a pending ligand or binder design job. The reply is one photograph with a short clinical caption when rendering succeeds. Files follow via /download.
-/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note, /measure, or /scribe, without clearing saved biometrics, patient files, or measurements.
+/cancel — Discard a pending design job, end an active /onboard question, or disarm a pending /note, /measure, /annotate, or /scribe, without clearing saved biometrics, patient files, or measurements.
 /onboard — Collect patient biometrics (age, sex, weight, height) one question at a time. Values are secrets and are never shown in card dumps.
 /onboard status — Report whether biometrics are complete, without printing values.
 /onboard clear — Delete patient biometric secrets and patient files on this card.
@@ -140,6 +141,7 @@ Commands:
 /measure list — List keys and counts. Secret measures appear only as a count.
 /measure clear [key|all] — Clear one key series or all measurements on this card.
 Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
+/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
@@ -2080,6 +2082,84 @@ async def _run_scribe(
     )
 
 
+
+async def cmd_annotate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """CNV/SV paste → ClassifyCNV ACMG brief. Orthogonal bioscreen. No Discord."""
+    if not await _authorized(update, context):
+        return
+    message = update.effective_message
+    assert message is not None
+    args = list(context.args or [])
+    if not args:
+        await message.reply_text(annotate_mod.start_annotate(context.user_data))
+        return
+    raw = (message.text or "")
+    parts = raw.split(None, 1)
+    paste = parts[1] if len(parts) > 1 else " ".join(args)
+    brief, results, gate_result, status = await asyncio.to_thread(
+        annotate_mod.process_paste, context.user_data, paste
+    )
+    if status == "ok" and results is not None:
+        # Caption + document brief (MD)
+        caption = annotate_mod.success_caption(len(results))
+        from io import BytesIO
+        buf = BytesIO(brief.encode("utf-8"))
+        await message.reply_document(
+            document=buf,
+            filename="chromosomal-annotation.md",
+            caption=caption[:1024],
+        )
+        # Also a short Telegram preview (Findings only, capped)
+        preview_lines = []
+        for line in brief.splitlines():
+            if line.startswith("# ") or line.startswith("## "):
+                preview_lines.append(line)
+            elif line.startswith("- "):
+                preview_lines.append(line)
+            if len(preview_lines) >= 18:
+                break
+        preview = "\n".join(preview_lines)
+        if len(preview) > 3500:
+            preview = preview[:3500] + "\n…"
+        await message.reply_text(preview or caption)
+        cnv_ids = [r.interval.cnv_id() for r in results]
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_ANNOTATE,
+            {
+                "cnv_ids": cnv_ids,
+                "n_intervals": len(results),
+                "classifications": [r.classification for r in results],
+                "brief_md": brief,
+                "bioscreen_decision": (
+                    gate_result.decision.value if gate_result else "PASS"
+                ),
+                "patient_id": _patient_id_from_user_data(context.user_data),
+            },
+        )
+        # Never Discord: annotate stays off the mirror.
+        return
+    if status == "block" and gate_result is not None:
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_BIOSECURITY,
+            {
+                "decision": gate_result.decision.value,
+                "patient_id": _patient_id_from_user_data(context.user_data),
+            },
+        )
+    if status == "review" and gate_result is not None:
+        _safe_emit(
+            _user_id(update),
+            history_mod.KIND_BIOSECURITY,
+            {
+                "decision": gate_result.decision.value,
+                "patient_id": _patient_id_from_user_data(context.user_data),
+            },
+        )
+    await message.reply_text(brief)
+
+
 async def cmd_measure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Paste observations onto the card. Secret values never echoed. No Discord."""
     if not await _authorized(update, context):
@@ -2184,6 +2264,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     ended_onboard = onboard_mod.end_onboard(context.user_data)
     ended_note = patient_files_mod.end_note(context.user_data)
     ended_measure = measure_mod.end_measure(context.user_data)
+    ended_annotate = annotate_mod.end_annotate(context.user_data)
     ended_scribe = scribe_md_mod.end_scribe(context.user_data)
     had_design = context.user_data.pop(PENDING_DESIGN_KEY, None) is not None
     parts: list[str] = []
@@ -2199,6 +2280,8 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
     if ended_measure:
         parts.append(measure_mod.MSG_CANCELLED)
+    if ended_annotate:
+        parts.append(annotate_mod.MSG_CANCELLED)
     if ended_scribe:
         parts.append(scribe_md_mod.MSG_CANCELLED)
     if parts:
@@ -2275,8 +2358,50 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     },
                 )
         return
+    if annotate_mod.is_armed(context.user_data):
+        # Priority: onboard > note > measure > annotate > scribe armed > generic.
+        brief, results, gate_result, status = await asyncio.to_thread(
+            annotate_mod.process_paste, context.user_data, text
+        )
+        if status == "ok" and results is not None:
+            from io import BytesIO
+            caption = annotate_mod.success_caption(len(results))
+            buf = BytesIO(brief.encode("utf-8"))
+            await message.reply_document(
+                document=buf,
+                filename="chromosomal-annotation.md",
+                caption=caption[:1024],
+            )
+            await message.reply_text(caption)
+            cnv_ids = [r.interval.cnv_id() for r in results]
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_ANNOTATE,
+                {
+                    "cnv_ids": cnv_ids,
+                    "n_intervals": len(results),
+                    "classifications": [r.classification for r in results],
+                    "brief_md": brief,
+                    "bioscreen_decision": (
+                        gate_result.decision.value if gate_result else "PASS"
+                    ),
+                    "patient_id": _patient_id_from_user_data(context.user_data),
+                },
+            )
+            return
+        if status in ("block", "review") and gate_result is not None:
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_BIOSECURITY,
+                {
+                    "decision": gate_result.decision.value,
+                    "patient_id": _patient_id_from_user_data(context.user_data),
+                },
+            )
+        await message.reply_text(brief)
+        return
     if scribe_md_mod.is_armed(context.user_data):
-        # Priority: onboard > note > measure > scribe armed > generic.
+        # Priority: onboard > note > measure > annotate > scribe armed > generic.
         scribe_md_mod.end_scribe(context.user_data)
         await _run_scribe(message, context, text, user_id=_user_id(update))
         return
@@ -2366,6 +2491,7 @@ def main() -> None:
     application.add_handler(CommandHandler("onboard", cmd_onboard))
     application.add_handler(CommandHandler("note", cmd_note))
     application.add_handler(CommandHandler("measure", cmd_measure))
+    application.add_handler(CommandHandler("annotate", cmd_annotate))
     application.add_handler(CommandHandler("research", cmd_research))
     application.add_handler(CommandHandler("evidence", cmd_evidence))
     application.add_handler(CommandHandler("variant", cmd_variant))

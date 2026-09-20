@@ -523,6 +523,128 @@ def _write_to_inbox(user_id: int | str, event: dict[str, Any], reason: str) -> N
     store.atomic_write_json(path, blob)
 
 
+
+def apply_annotate(user_id: int | str, patient_id: str, payload: dict[str, Any]) -> None:
+    """Append clinic.md ## Chromosomal + search.json cnv:<id>. Never lab.ipynb."""
+    brief = str(payload.get("brief_md") or payload.get("md") or "")
+    cnv_ids = payload.get("cnv_ids") or []
+    if isinstance(cnv_ids, str):
+        cnv_ids = [cnv_ids]
+    cnv_ids = [str(x).strip() for x in cnv_ids if str(x).strip()]
+    one = payload.get("cnv_id")
+    if one:
+        cnv_ids.append(str(one).strip())
+    # Dedupe preserve order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for k in cnv_ids:
+        if k in seen:
+            continue
+        seen.add(k)
+        ordered.append(k)
+    ts = str(payload.get("ts") or _now())
+    n = int(payload.get("n_intervals") or payload.get("n") or len(ordered) or 0)
+    classifications = payload.get("classifications") or []
+    if isinstance(classifications, str):
+        classifications = [classifications]
+    # Build scan-first clinic block (≤3 bullets)
+    banner = "Research use only. Chromosomal annotations are not a diagnosis."
+    lines = [
+        f"- {ts}: {n} chromosomal interval(s) annotated (ACMG/ClinGen-style). "
+        f"{banner}",
+    ]
+    for i, cid in enumerate(ordered[:3]):
+        klass = ""
+        if i < len(classifications) and classifications[i]:
+            klass = f" — {classifications[i]}"
+        lines.append(f"- Interval on file (id `cnv:{cid}`){klass}.")
+    if len(ordered) > 3:
+        lines.append(f"- …and {len(ordered) - 3} more interval(s) on file.")
+    lines.append(
+        "- Method: ClassifyCNV / ACMG-ClinGen 2019 "
+        "(https://doi.org/10.1038/s41436-019-0686-8)."
+    )
+    # Prefer full brief excerpt if short and present (redacted — no sequences)
+    if brief and "Chromosomal annotation" in brief[:80]:
+        # Keep Findings-only snippet capped
+        import re as _re
+        m = _re.search(r"## Findings\s*\n(.*?)(?=\n## |\Z)", brief, _re.DOTALL)
+        if m:
+            findings = m.group(1).strip()
+            # At most ~6 lines
+            flines = [ln for ln in findings.splitlines() if ln.strip()][:6]
+            if flines:
+                id_bits = []
+                for cid in ordered[:3]:
+                    id_bits.append(f"(id `cnv:{cid}`)")
+                id_line = (" ".join(id_bits)) if id_bits else ""
+                lines = [
+                    f"- {ts}: chromosomal annotation on file. {banner}",
+                    *[f"- {ln.lstrip('- ').strip()}" for ln in flines[:3]],
+                ]
+                if id_line:
+                    lines.append(f"- Intervals {id_line}.")
+                lines.append(
+                    "- Method: ClassifyCNV / ACMG-ClinGen 2019 "
+                    "(https://doi.org/10.1038/s41436-019-0686-8)."
+                )
+    body = "\n".join(lines) + "\n"
+    md = _read_clinic(user_id, patient_id)
+    found = _get_section_body(md, "Chromosomal")
+    if found is None:
+        section = "## Chromosomal\n\n" + banner + "\n\n" + body
+        md2 = md.rstrip() + "\n\n" + section
+        if not md2.endswith("\n"):
+            md2 += "\n"
+    else:
+        section, _s, _e = found
+        # Idempotent: skip if same cnv ids already present
+        if ordered and all(f"(id `cnv:{cid}`)" in section for cid in ordered):
+            # Still refresh search index
+            md2 = md
+        else:
+            new_section = section.rstrip() + "\n" + body
+            if not new_section.endswith("\n"):
+                new_section += "\n"
+            md2 = _replace_section(md, "Chromosomal", new_section)
+    _write_clinic(user_id, patient_id, md2)
+    offset = (_get_section_body(md2, "Chromosomal") or ("", 0, 0))[1]
+    # search.json cnv:<id>
+    store.ensure_patient_files(user_id, patient_id)
+    search = _read_search(user_id, patient_id)
+    entries: list[dict[str, Any]] = list(search.get("entries") or [])
+    titles = {f"cnv:{cid}" for cid in ordered}
+    kept = [e for e in entries if str(e.get("title") or "") not in titles]
+    for cid in ordered:
+        title = f"cnv:{cid}"
+        kept.append(
+            {
+                "doi": "",
+                "file": store.CLINIC_NAME,
+                "section": "Chromosomal",
+                "offset": offset,
+                "title": title,
+                "tokens": _light_tokens(title),
+            }
+        )
+    if not ordered:
+        # Still index a batch stub
+        title = f"cnv:batch-{ts[:10]}"
+        kept = [e for e in kept if str(e.get("title") or "") != title]
+        kept.append(
+            {
+                "doi": "",
+                "file": store.CLINIC_NAME,
+                "section": "Chromosomal",
+                "offset": offset,
+                "title": title,
+                "tokens": _light_tokens(title),
+            }
+        )
+    search["entries"] = kept
+    _write_search(user_id, patient_id, search)
+
+
 def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
     """Apply one typed event. Idempotent if caller skips processed ids."""
     kind = event.get("kind")
@@ -547,6 +669,7 @@ def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
         history.KIND_BOLTZ,
         history.KIND_DESIGN,
         history.KIND_CONFIRM,
+        history.KIND_ANNOTATE,
     }
     if needs_patient and not patient_id:
         _write_to_inbox(user_id, event, "no_patient")
@@ -570,6 +693,9 @@ def apply_event(user_id: int | str, event: dict[str, Any]) -> None:
     elif kind == history.KIND_BIOSECURITY:
         assert patient_id
         apply_bioscreen(user_id, patient_id, payload)
+    elif kind == history.KIND_ANNOTATE:
+        assert patient_id
+        apply_annotate(user_id, patient_id, payload)
     elif kind == history.KIND_ESM:
         assert patient_id
         apply_lab_stub(

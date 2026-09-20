@@ -17,6 +17,7 @@ from typing import Any
 
 from . import board_md as board_md_mod
 from . import measure as measure_mod
+from . import annotate as annotate_mod
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import store
@@ -354,13 +355,14 @@ def clinical_blocks(
     *,
     user_id: int | str | None,
 ) -> dict[str, str]:
-    """Peer-reviewed Evidence + minutes + note stubs from clinic.md / board projection."""
+    """Peer-reviewed Evidence + minutes + note stubs + Chromosomal from clinic.md."""
     patient_id = board_md_mod._peek_patient_id(user_data) if user_data else None
     clinic = _read_clinic(user_id, patient_id)
     evidence = board_md_mod._evidence_from_last_run(load_card(user_data) if user_data else None)
     if not evidence:
         evidence = board_md_mod._evidence_from_clinic(user_id, patient_id)
     minutes = _section_body(clinic, "Meeting minutes") if clinic else ""
+    chromosomal = _section_body(clinic, "Chromosomal") if clinic else ""
     files_n = board_md_mod.patient_files_count(user_data)
     notes_line = (
         f"Patient files: {files_n} on file (contents not shown)."
@@ -371,6 +373,7 @@ def clinical_blocks(
         "evidence": evidence or "",
         "minutes": minutes if _nonempty_section(minutes) else "",
         "notes": notes_line,
+        "chromosomal": chromosomal if _nonempty_section(chromosomal) else "",
     }
 
 
@@ -504,6 +507,200 @@ def _charts_html(series: dict[str, list[dict[str, Any]]]) -> str:
     return "\n".join(blocks)
 
 
+
+# Approximate chromosome lengths (hg38) for strip layout — Mb scale, not 1-bp.
+_CHR_MB: dict[str, float] = {
+    "chr1": 248.9, "chr2": 242.2, "chr3": 198.3, "chr4": 190.2, "chr5": 181.5,
+    "chr6": 170.8, "chr7": 159.3, "chr8": 145.1, "chr9": 138.4, "chr10": 133.8,
+    "chr11": 135.1, "chr12": 133.3, "chr13": 114.4, "chr14": 107.0, "chr15": 101.9,
+    "chr16": 90.3, "chr17": 83.3, "chr18": 80.4, "chr19": 58.6, "chr20": 64.4,
+    "chr21": 46.7, "chr22": 50.8, "chrX": 156.0, "chrY": 57.2, "chrM": 0.02,
+}
+
+
+def chromosomal_strip_html(
+    user_data: dict[str, Any] | None,
+    *,
+    clinic_md_body: str = "",
+) -> str:
+    """Interactive CNV strip: tap bar → breakdown; filter chr/DEL/DUP; gene→evidence/variant hints.
+
+    No 1-bp / 1-AA letter zoom. SeqViz/igv deferred.
+    """
+    cnvs = annotate_mod.get_cnv_public(user_data)
+    banner = annotate_mod.MSG_BANNER
+    if not cnvs:
+        # Fall back to clinic prose only
+        if clinic_md_body and _nonempty_section(clinic_md_body):
+            return (
+                f'<p class="cnv-banner">{_esc(banner)}</p>\n'
+                + _md_to_safe_html(_trim_claims_and_harvard(clinic_md_body, max_claims=3))
+            )
+        return f'<p class="empty">{_esc(NONE_YET)}</p>'
+
+    # Collect filter options
+    chroms = sorted({str(c.get("chrom") or "") for c in cnvs if c.get("chrom")})
+    payload = json.dumps(cnvs, ensure_ascii=False)
+    chrom_opts = "".join(
+        f'<option value="{_esc(c)}">{_esc(c)}</option>' for c in chroms
+    )
+    # Ideogram rows: one row per chromosome that has a CNV
+    rows_html: list[str] = []
+    by_chr: dict[str, list[dict[str, Any]]] = {}
+    for c in cnvs:
+        ch = str(c.get("chrom") or "chr?")
+        by_chr.setdefault(ch, []).append(c)
+    for ch in sorted(by_chr.keys(), key=lambda x: (_CHR_MB.get(x, 999), x)):
+        length_mb = _CHR_MB.get(ch, 100.0) or 100.0
+        bars: list[str] = []
+        for c in by_chr[ch]:
+            start = float(c.get("start") or 0)
+            end = float(c.get("end") or 0)
+            left = max(0.0, min(100.0, (start / (length_mb * 1_000_000)) * 100.0))
+            width = max(0.4, min(100.0 - left, ((end - start) / (length_mb * 1_000_000)) * 100.0))
+            sv = str(c.get("svtype") or "DEL").upper()
+            klass = "cnv-del" if sv == "DEL" else "cnv-dup"
+            cid = _esc(str(c.get("id") or ""))
+            title = _esc(f"{c.get('label')} — {c.get('classification')}")
+            bars.append(
+                f'<button type="button" class="cnv-bar {klass}" data-id="{cid}" '
+                f'data-chrom="{_esc(ch)}" data-sv="{_esc(sv)}" '
+                f'style="left:{left:.2f}%;width:{width:.2f}%;" '
+                f'title="{title}" aria-label="{title}"></button>'
+            )
+        rows_html.append(
+            f'<div class="cnv-row" data-chrom="{_esc(ch)}">'
+            f'<span class="cnv-chr-label">{_esc(ch)}</span>'
+            f'<div class="cnv-track">{"".join(bars)}</div>'
+            f"</div>"
+        )
+
+    return f"""
+<p class="cnv-banner">{_esc(banner)}</p>
+<div class="cnv-toolbar" role="group" aria-label="Chromosomal filters">
+  <label>Chromosome
+    <select id="cnv-filter-chr">
+      <option value="">All</option>
+      {chrom_opts}
+    </select>
+  </label>
+  <label>Type
+    <select id="cnv-filter-sv">
+      <option value="">All</option>
+      <option value="DEL">DEL</option>
+      <option value="DUP">DUP</option>
+    </select>
+  </label>
+</div>
+<div class="cnv-strip" id="cnv-strip" aria-label="CNV interval strip">
+{"".join(rows_html)}
+</div>
+<aside class="cnv-panel" id="cnv-panel" hidden>
+  <h4 id="cnv-panel-title">Interval</h4>
+  <p id="cnv-panel-class"></p>
+  <p id="cnv-panel-span"></p>
+  <h5>Criteria breakdown</h5>
+  <ul id="cnv-panel-criteria"></ul>
+  <h5>Genes</h5>
+  <ul id="cnv-panel-genes"></ul>
+  <p class="cnv-panel-hint">Gene names deep-link as Telegram hints only — not auto-run.
+  Research use only; not a diagnosis.</p>
+  <button type="button" id="cnv-panel-close">Close</button>
+</aside>
+<script type="application/json" id="cnv-data">{_esc(payload)}</script>
+"""
+
+
+def chromosomal_strip_js() -> str:
+    """Client JS for tap → panel, filters, gene→/evidence|/variant hints."""
+    return r"""
+<script>
+(function () {
+  var dataEl = document.getElementById("cnv-data");
+  if (!dataEl) return;
+  var items = [];
+  try { items = JSON.parse(dataEl.textContent || "[]"); } catch (e) { items = []; }
+  var byId = {};
+  items.forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+  var panel = document.getElementById("cnv-panel");
+  var title = document.getElementById("cnv-panel-title");
+  var klass = document.getElementById("cnv-panel-class");
+  var span = document.getElementById("cnv-panel-span");
+  var crit = document.getElementById("cnv-panel-criteria");
+  var genes = document.getElementById("cnv-panel-genes");
+  var closeBtn = document.getElementById("cnv-panel-close");
+  function show(c) {
+    if (!c || !panel) return;
+    title.textContent = c.label || (c.chrom + " " + c.svtype);
+    klass.textContent = "Classification: " + (c.classification || "—") +
+      " (ACMG/ClinGen-style). Research use only; not a diagnosis.";
+    span.textContent = "Span: " + (c.span || "") + " (abstracted; not 1-bp zoom).";
+    crit.innerHTML = "";
+    var criteria = c.criteria || {};
+    var keys = Object.keys(criteria);
+    if (!keys.length) {
+      var li = document.createElement("li");
+      li.textContent = "No non-zero ACMG evidence fields were scored for this interval.";
+      crit.appendChild(li);
+    } else {
+      keys.sort(function (a, b) { return Math.abs(criteria[b]) - Math.abs(criteria[a]); });
+      keys.slice(0, 12).forEach(function (k) {
+        var li = document.createElement("li");
+        var v = criteria[k];
+        li.textContent = k + " (" + (v >= 0 ? "+" : "") + Number(v).toFixed(2) + ")";
+        crit.appendChild(li);
+      });
+    }
+    genes.innerHTML = "";
+    var glist = (c.dosage_genes && c.dosage_genes.length) ? c.dosage_genes :
+                (c.coding_genes || []);
+    if (!glist.length) {
+      var gi = document.createElement("li");
+      gi.textContent = "none yet";
+      genes.appendChild(gi);
+    } else {
+      glist.slice(0, 20).forEach(function (g) {
+        var li = document.createElement("li");
+        var code = document.createElement("code");
+        code.textContent = g;
+        li.appendChild(code);
+        li.appendChild(document.createTextNode(" — in Telegram: /evidence " + g +
+          " or /variant " + g + " <change>"));
+        genes.appendChild(li);
+      });
+    }
+    panel.hidden = false;
+  }
+  document.querySelectorAll(".cnv-bar").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      show(byId[btn.getAttribute("data-id")]);
+    });
+  });
+  if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
+  function applyFilters() {
+    var chr = (document.getElementById("cnv-filter-chr") || {}).value || "";
+    var sv = (document.getElementById("cnv-filter-sv") || {}).value || "";
+    document.querySelectorAll(".cnv-row").forEach(function (row) {
+      var rch = row.getAttribute("data-chrom") || "";
+      var showRow = !chr || rch === chr;
+      row.style.display = showRow ? "" : "none";
+      row.querySelectorAll(".cnv-bar").forEach(function (bar) {
+        var bsv = bar.getAttribute("data-sv") || "";
+        var bch = bar.getAttribute("data-chrom") || "";
+        var ok = (!chr || bch === chr) && (!sv || bsv === sv);
+        bar.style.display = ok ? "" : "none";
+      });
+    });
+  }
+  var fchr = document.getElementById("cnv-filter-chr");
+  var fsv = document.getElementById("cnv-filter-sv");
+  if (fchr) fchr.addEventListener("change", applyFilters);
+  if (fsv) fsv.addEventListener("change", applyFilters);
+})();
+</script>
+"""
+
+
 def render_app_html(
     user_data: dict[str, Any] | None,
     *,
@@ -527,6 +724,10 @@ def render_app_html(
         expires_iso = expires_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     evidence_html = _md_to_safe_html(_trim_claims_and_harvard(clin["evidence"]))
+    chromosomal_html = chromosomal_strip_html(
+        user_data, clinic_md_body=clin.get("chromosomal") or ""
+    )
+    cnv_js = chromosomal_strip_js() if annotate_mod.get_cnv_public(user_data) else ""
     minutes_html = (
         _md_to_safe_html(_trim_claims_and_harvard(clin["minutes"], max_claims=3))
         if clin["minutes"]
@@ -815,6 +1016,8 @@ footer {{
   </section>
   <section id="clinical">
     <h2>Clinical</h2>
+    <h3>Chromosomal</h3>
+    {chromosomal_html}
     <h3>Evidence</h3>
     {evidence_html}
     <h3>Meeting minutes</h3>
@@ -864,6 +1067,7 @@ footer {{
 </script>
 {mol_init_script}
 {chem_init_script}
+{cnv_js}
 </body>
 </html>
 """

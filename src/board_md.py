@@ -15,6 +15,7 @@ from typing import Any
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import measure as measure_mod
+from . import annotate as annotate_mod
 from . import store
 from .context_card import CONTEXT_CARD_KEY, ContextCard, load_card
 
@@ -482,6 +483,7 @@ def render_board_md(
         card=card,
     )
     measure_block = measure_mod.board_measurements_block(user_data)
+    chromosomal_block = chromosomal_board_block(user_data)
 
     return (
         f"{PACKET_TITLE}\n"
@@ -503,6 +505,10 @@ def render_board_md(
         "\n"
         f"{evidence_block}\n"
         "\n"
+        "## Chromosomal\n"
+        "\n"
+        f"{chromosomal_block}\n"
+        "\n"
         "## Laboratory designs\n"
         "\n"
         f"{lab_block}\n"
@@ -515,6 +521,29 @@ def render_board_md(
         "\n"
         f"{SOURCE_NOTE}\n"
     )
+
+
+
+def chromosomal_board_block(user_data: dict[str, Any] | None) -> str:
+    """Scan-first Chromosomal section for /board MD packet (redacted)."""
+    cnvs = annotate_mod.get_cnv_public(user_data) if user_data else []
+    if not cnvs:
+        return annotate_mod.CLINIC_NONE_YET
+    lines = [annotate_mod.MSG_BANNER, ""]
+    for c in cnvs[:3]:
+        genes = c.get("dosage_genes") or c.get("coding_genes") or []
+        gene_s = ", ".join(genes[:8]) if genes else "none yet"
+        lines.append(
+            f"- {c.get('label')} ({c.get('span')}) — {c.get('classification')}; "
+            f"genes: {gene_s} (id `cnv:{c.get('id')}`)"
+        )
+    if len(cnvs) > 3:
+        lines.append(f"- …and {len(cnvs) - 3} more interval(s) on file.")
+    lines.append(
+        "- Method: ClassifyCNV / ACMG-ClinGen 2019 "
+        "(https://doi.org/10.1038/s41436-019-0686-8)."
+    )
+    return "\n".join(lines)
 
 
 def _peek_patient_id(user_data: dict[str, Any]) -> str | None:

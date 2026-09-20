@@ -21,6 +21,13 @@ This is a research bot for Biohub, Boltz, and BindCraft models. Send /help for t
 Ligand design (/design ligand) requires at least ten molecules (about US$0.25) and at most one hundred. Binder design (/design binder) defaults to five designs and caps at twenty; jobs can take tens of minutes to a few hours. The confirm card states mode, count, and any cost estimate before work begins. Candidates are computer suggestions only. They are not validated inhibitors or therapeutics, and this bot does not advise synthesis or laboratory work.
 ```
 
+
+## HELP `/annotate` one-liner (locked)
+
+```
+/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
+```
+
 ## HELP `/trials` one-liner (locked)
 
 ```

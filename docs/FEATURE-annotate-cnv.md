@@ -68,13 +68,42 @@ Telegram stays thin: MD summary + `/app` link. Canvas on HTTPS page only. White/
 - Mixed DNA|RNA|AA = **separate records**; never invent DNA from AA  
 - Streaming parse; size caps + helper refuse; idempotent feature hashes  
 
+
+
+## Informative · interactive · useful (locked 2026-09-20 — user)
+
+Minimise *busywork* interaction — **not** a static poster. Clinicians must get value from the layer.
+
+| Must | How (still above 1 bp / 1 AA) |
+| --- | --- |
+| **Informative** | Class, ACMG criteria breakdown, key overlapped genes, bioscreen stamp if any — readable in ≤3 bullets + detail panel |
+| **Interactive** | Tap/click a CNV interval → side panel with breakdown; filter by chr / DEL vs DUP; expand “why this class” |
+| **Useful** | Actionable next steps: copy genes, open `/evidence`/`/variant` for a gene, link out to ClinGen-style cites; feeds `/app` board |
+
+Still abstract away nucleotide/AA letter resolution. Interaction is at **interval / gene / class** granularity.
+
+## Clinician UX boil-down (locked 2026-09-20 — user)
+
+**Minimum interactive UX · maximum clinician experience.**  
+**Abstract away single-base and single-amino-acid resolution.**
+
+| Do | Don’t |
+| --- | --- |
+| Chromosome / arm / band / CNV interval cards | Zoom to 1 bp or 1 AA |
+| One glance: gain/loss + class + ≤3 genes | Sequence letter canvases as the lead view |
+| Tap/open `/app` section; optional one-click “details” | Full Benchling editor, pan/zoom nucleotide tracks in v1 |
+| MD brief + simple ideogram/track of **intervals** | SeqViz/igv at residue resolution as default |
+
+**v1a lead experience:** Telegram MD (class + breakdown + genes) + `/app` Clinical **interval strip** (chr bars, colored DEL/DUP).  
+**SeqViz / igv.js nucleotide views:** deferred unless user asks “sequence detail” — not the default clinician path.
+
 ## Staged ship
 
 | Stage | Scope |
 | --- | --- |
 | **v1a** | ClassifyCNV + MD brief + clinic.md / search.json |
-| **v1b** | SeqViz in `/app` for ≤50 kb constructs |
-| **v1c** | igv.js for chromosomal windows |
+| **v1b** | Interval strip / ideogram in `/app` Clinical (not 1bp) |
+| **v1c** | Optional sequence detail (SeqViz/igv) — opt-in only, not default |
 
 `commec` stamps may show as non-editable banners on the viewer — never soft-PASS bioscreen.
 

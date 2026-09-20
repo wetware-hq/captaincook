@@ -25,6 +25,7 @@ KIND_ESM = "esm"
 KIND_BOLTZ = "boltz"
 KIND_DESIGN = "design"
 KIND_CONFIRM = "confirm"
+KIND_ANNOTATE = "annotate_cnv"
 
 _DOI_RE = re.compile(
     r"(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[-._;()/:A-Z0-9]+)",
@@ -94,6 +95,12 @@ def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "measure_key",
             "n",
             "n_secret",
+            "cnv_ids",
+            "cnv_id",
+            "n_intervals",
+            "bioscreen_decision",
+            "brief_md",
+            "classifications",
         ):
             clean[k] = v
             continue
