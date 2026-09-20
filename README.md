@@ -14,7 +14,7 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | --- | --- |
 | Channel | Telegram long-polling via `python-telegram-bot` v21+ on Python 3.11+. |
 | Compute | Biohub ([`biohub.ai`](https://biohub.ai/learn/getting-started)) for folding; Boltz ([`api.boltz.bio`](https://api.boltz.bio/docs/)) for structure, binding, and ligand design; BindCraft (optional Modal GPU) for protein binders. |
-| Bioscreen | Before GPU or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate. Tool-down fails closed (`BLOCK`). |
+| Bioscreen | Before GPU, annotation, or paid API calls: `PASS`, `REVIEW`, or `BLOCK`. Unambiguous DNA or RNA is screened with local IBBIS `commec` (thin MIT packs, `--skip-tx` in v1). Amino-acid paths skip `commec` and do not reverse-translate (never invent DNA from AA). Tool-down fails closed (`BLOCK`). Missing `COMMEC_BIN` uses a **distinct** not-configured refuse — not the transient tool-down string. |
 | Success payload | One `reply_photo` with a 3C caption written for physician and patient readers. Binder photos: target default colour, binder accent; N=1 single complex, N>1 grid. No diagnosis or drug claims. |
 | Literature | `/research` → preprint brief → Telegram `.md` and `lab.ipynb` literature cell (bioRxiv/medRxiv only; no care-framed route to clinic). `/evidence` → peer-reviewed brief → Telegram `.md` and `clinic.md` `## Evidence` (MEDLINE; preprints excluded). Each brief uses Harvard references (≤5, DOI preferred). Social (X) signal is deferred. |
 | App / variant / trials | `/app` (and `/app update`; `/board` / `/board update` aliases one release) → case-conference MD packet from session stores + optional short-TTL HTTPS live view on private→public R2 (7-day default / 30-day max; fail-closed without `APP_DEPLOY_*`). `/app revoke` ends sharing early. Live view merges clinic.md → **Clinical** (incl. Chromosomal SEQ|TABLE, tap → ACMG) and lab.ipynb → **Laboratory** (Parts SEQ|TABLE from `/annotate parts`, Structures via Mol*/3Dmol); length/hash only for sequence bodies. `/variant` → papers-first peer-reviewed gene/variant brief (no FM scores in v1). `/trials` → ClinicalTrials.gov shortlist (eligibility themes only; never enroll). Specialty-agnostic; research-use only. |
@@ -25,7 +25,8 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Biometrics | `/onboard` stores secret age, sex, weight, and height on the card. `/load` shows only Patient: on file or incomplete — never raw values. |
 | Patient files | `/note` appends session notes to `patient_files[]`, separate from biometric secrets. Bodies are not shown in `/load` or list output. |
 | Patient store | Per patient: `clinic.md` + `lab.ipynb` + `search.json`. Handlers emit events; one background daemon is the sole file writer (DOI-idempotent Evidence upserts; Harvard bottoms never stripped). Design hits index as `ligand:` or `binder:`; CNV/parts as `cnv:` / `parts:` keys — counts and spans only, never SEQUENCE bodies. Session card holds secrets, full sequence, and `last_run`; optional cold backup later on private R2 `patients/<id>/`. |
-| Privacy | Biometric secrets never appear as raw values in `clinic.md` / `lab.ipynb`. Secrets and note bodies never enter language-model prompts, lit briefs, or captions. `/scribe` must not invent decisions absent from the source. Discord outbound is optional and **not live** until `DISCORD_WEBHOOK_URL` is set; patient files, `/annotate` results, and `/app` live links are never mirrored. |
+| Privacy | Biometric secrets never appear as raw values in `clinic.md` / `lab.ipynb`. Secrets, note bodies, and SEQUENCE bodies never enter language-model prompts, lit briefs, or captions. `/scribe` must not invent decisions absent from the source. Discord outbound is optional and **not live** until `DISCORD_WEBHOOK_URL` is set; **Discord dark** for `/annotate`, `/annotate parts`, `/app`, measures, and PHI — never mirrored. |
+| UX locks | Never invent DNA from amino acids. Chromosomal and Parts use tap panels (ACMG / product-span). Empty Chromosomal or Parts → “None yet.” Annotate tool databases stay empty by operator choice until installed (fail-closed; private R2 for shared DBs later — not GitHub). |
 | Replay | `/view` returns the cached photo and caption when the new card fingerprint matches a prior completed run. Cache is chat-session only and uses no GPU. Fingerprints exclude patient secrets and patient files. |
 | Spend gate | `/design ligand` or `/design binder` estimates cost and waits (explicit mode; bare `/design` asks which). `/confirm` starts the pending job. `/cancel` aborts. |
 
@@ -49,7 +50,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/view` | Replays the stored photo and caption for a matching completed card. |
 | `/download` | Sends the last-run CIF and, for ligand design, the CSV (binder FASTA/CIF when available). |
 | `/confirm` | Runs the pending ligand or binder job; returns one photo and a research-use caption. |
-| `/cancel` | Aborts the pending design job, onboard Q&A, or armed `/scribe` / `/note` capture. |
+| `/cancel` | Discard a pending design job, end an active `/onboard` question, or disarm a pending `/note`, `/measure`, `/annotate`, or `/scribe`, without clearing saved biometrics, patient files, or measurements. |
 | `/research <topic>` | Europe PMC preprint brief → Markdown document with Harvard references (≤5). |
 | `/evidence <question>` | Europe PMC peer-reviewed brief (MEDLINE; preprints excluded) → Markdown with Harvard references (≤5). |
 | `/onboard` | Collects biometric secrets one question at a time. |
@@ -60,20 +61,22 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/measure` | Paste-friendly observations (HR, BP, SpO2, Temp, Wt, Ht, Glu + curated synonyms). Helper-first on bad paste; secret measures redacted to counts on `/app`. |
-| `/measure list` | Lists non-secret measures; secret fields as on file only. |
-| `/measure clear` | Clears session measures. |
-| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (**SEQ** CNV chips + **TABLE**; tap → ACMG). **Laboratory** includes **Parts** (SEQ class-count chips + TABLE from `/annotate parts`; no seq body) and Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
-| `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
-| `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
+| `/measure` | Paste patient observations onto the current card (HR, BP, weight_kg=…, optional secret). `/measure list` shows keys; secret values are never shown. Research use only; not a diagnosis. |
+| `/measure list` | List keys and counts. Secret measures appear only as a count. |
+| `/measure clear [key\|all]` | Clear one key series or all measurements on this card. |
+| `/annotate` | One-shot coords, paste sequence, or upload FASTA/FASTQ/VCF/BED (GRCh38 default; refuse BAM/CRAM). Research use only; not a diagnosis. Three intakes → ClassifyCNV Chromosomal (coords/BED/VCF-SV) or secure card SEQUENCE (FASTA/FASTQ / paste; length+hash in chat). Discord dark; `commec` fail-closed (distinct `COMMEC_BIN` refuse). |
+| `/annotate parts` | Bakta genetic-parts map from the DNA/RNA sequence on the card (length + hash + feature counts). Research use only; not a diagnosis. Fail-closed without Bakta + DB; AA refuse invent; feeds `/app` Laboratory Parts. |
+| `/app` | Assemble a Markdown case-conference packet from the current card and patient stores. Optional short-lived web view when configured. Research use only; not a clinical record. Live: **Clinical** Chromosomal (**SEQ**\|**TABLE**, tap → ACMG); **Laboratory** Parts (SEQ class chips + TABLE) + Structures (Mol* mmCIF + 3Dmol ligands). Discord dark. |
+| `/app update` | Same as `/app` (fresh snapshot; not an incremental merge). |
+| `/app revoke` | End sharing of the current live view early. The Markdown packet is unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | Three intakes (card required): one-shot coords (`/annotate chr12:… DUP`, GRCh38 default), raw sequence paste, or NGS upload (FASTA/FASTQ-capped/VCF/BED; refuse BAM/CRAM). Coords → ClassifyCNV Chromosomal; DNA/RNA → `commec` then secure SEQUENCE (length+hash only in chat/`/app`). Not a diagnosis; Discord dark. |
-| `/annotate parts` | Bakta genetic-parts map on card DNA/RNA → `last_run.parts` for `/app` Laboratory Parts (feature counts + seq_meta; no sequence body). Fail-closed without Bakta/DB. Not promoter/CDS invent from AA. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
-| `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
+| `/trials` `[query]` | Shortlist public ClinicalTrials.gov studies for the card or query. Eligibility themes only. Research use only; human review required; this bot does not enroll. |
 
 If image render fails, the caption is still sent as text.
+
+Command one-liners for `/annotate`, `/annotate parts`, `/app` (+ aliases), `/measure`, and `/trials` match `HELP_TEXT` in `src/bot.py` and `docs/COPY-help.md`. Messy `/measure` one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80); free paragraphs are not parsed.
 
 ## Design flow
 
@@ -107,7 +110,7 @@ Optional:
 
 - `TELEGRAM_ALLOWED_USER_ID` — restrict the bot to one Telegram user
 - `COMMEC_BIN` / `COMMEC_TIMEOUT_SEC` — local IBBIS `commec` for DNA/RNA bioscreen (fail-closed if binary or databases missing; distinct refuse for `COMMEC_BIN` unset)
-- `BAKTA` / Bakta database path — `/annotate parts` (fail-closed if CLI or DB missing)
+- `BAKTA_HOME` / `BAKTA_DB` / `BAKTA_BIN` — `/annotate parts` (fail-closed if CLI or DB missing)
 - `APP_DEPLOY_*` — short-TTL `/app` live-view upload (R2/S3-compatible); unset = Markdown packet only
 - `DISCORD_WEBHOOK_URL` — optional outbound `/research` TLDR mirror only (unset = disabled / **not live**; never echoes the URL; never sends clinic, lab, annotate, or `/app` links)
 - `SCRIBE_LLM_URL` / `SCRIBE_LLM_KEY` / `SCRIBE_LLM_MODEL` — optional OpenAI-compatible chat endpoint for `/scribe` (unset = fail-closed)
@@ -163,6 +166,11 @@ captaincook/
     onboard.py         # biometric secrets Q&A
     patient_files.py   # /note patient_files[]
     discord_webhook.py # optional outbound /research TLDR
+    annotate.py        # /annotate CNV intakes + ClassifyCNV
+    annotate_parts.py  # /annotate parts (Bakta)
+    app_html.py        # /app live HTML (Chromosomal / Parts / Structures)
+    app_deploy.py      # R2 / Worker TTL deploy
+    measure.py         # /measure paste + redaction
     biohub_client.py
     boltz_client.py
     small_molecule_design.py
@@ -181,7 +189,29 @@ captaincook/
 
 **Literature:** Europe PMC search REST for `/research` (preprints) and `/evidence` (peer-reviewed MEDLINE; `NOT SRC:PPR`). bioRxiv native keyword API and OpenAlex are out of scope for v1.
 
-**Bioscreen:** Local open-source IBBIS [`commec`](https://github.com/ibbis-bio/common-mechanism) with MIT [`commec-databases`](https://github.com/ibbis-bio/commec-databases) packs. Sequences are written to a temporary FASTA on the host; nothing is uploaded to IBBIS.
+**Bioscreen:** Local open-source IBBIS [`commec`](https://github.com/ibbis-bio/common-mechanism) with MIT [`commec-databases`](https://github.com/ibbis-bio/commec-databases) packs. Sequences are written to a temporary FASTA on the host; nothing is uploaded to IBBIS. Packs are not shipped here (operator install; empty by choice for now). Missing binary → distinct `COMMEC_BIN` refuse.
+
+**Annotate / deploy:** ClassifyCNV and Bakta are optional host tools (fail-closed without binary/DB). `/app` live HTML uses R2 SigV4 or a Worker (`APP_DEPLOY_*`). Shared annotate databases belong on **private R2** later — not GitHub, not public `/app` URLs.
+
+
+## Feature docs
+
+Locked specs and templates under `docs/`:
+
+| Doc | Topic |
+| --- | --- |
+| [`FEATURE-app.md`](docs/FEATURE-app.md) | `/app` packet + R2 TTL live view; Chromosomal / Parts / Structures |
+| [`FEATURE-annotate-cnv.md`](docs/FEATURE-annotate-cnv.md) | `/annotate` three intakes → ClassifyCNV |
+| [`FEATURE-annotate-parts.md`](docs/FEATURE-annotate-parts.md) | `/annotate parts` Bakta → Laboratory Parts |
+| [`FEATURE-app-molstar.md`](docs/FEATURE-app-molstar.md) | Mol* / 3Dmol Structures |
+| [`FEATURE-commec-pre-gpu-gate.md`](docs/FEATURE-commec-pre-gpu-gate.md) | `commec` bioscreen |
+| [`REFUSE-bioscreen.md`](docs/REFUSE-bioscreen.md) | Refuse copy (incl. distinct `COMMEC_BIN`) |
+| [`FEATURE-measure.md`](docs/FEATURE-measure.md) | `/measure` |
+| [`FEATURE-board.md`](docs/FEATURE-board.md) | `/board` → `/app` alias |
+| [`COPY-help.md`](docs/COPY-help.md) | Locked `/help` one-liners |
+| [`TEMPLATE-app.md`](docs/TEMPLATE-app.md) · [`TEMPLATE-annotate-cnv.md`](docs/TEMPLATE-annotate-cnv.md) · [`TEMPLATE-annotate-parts.md`](docs/TEMPLATE-annotate-parts.md) | Live-view / Telegram copy |
+
+Other `FEATURE-*`, `TEMPLATE-*`, and `COPY-*` files cover design, literature, onboard, scribe, Discord, and the patient store.
 
 ## Safety
 

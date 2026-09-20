@@ -192,3 +192,12 @@ def assert_no_secret_payload(payload: Any, *, where: str = "downstream") -> None
                 stack.append(val)
         elif isinstance(cur, (list, tuple)):
             stack.extend(cur)
+
+
+def last_note_meta(user_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the most recently appended note {id, created_at} or None."""
+    files = get_patient_files(user_data)
+    if not files:
+        return None
+    last = files[-1]
+    return {"id": last.get("id"), "created_at": last.get("created_at")}
