@@ -5,6 +5,33 @@
 **Depends on:** alphabet gate + `commec` bioscreen; clinic.md / search.json; `/app` Clinical merge  
 **Inspiration (UX):** Benchling-class clean feature tracks — not a cytogenetics workstation
 
+
+## Finalised model stack (scan 2026-09-20 — biostrategist)
+
+| Role | Tool | Why |
+| --- | --- | --- |
+| **Biosecurity hard gate** | **commec** (IBBIS Common Mechanism, MIT) | Open local DNA/RNA SoC/synth screen; orthogonal to clinical class |
+| **Clinical CNV lead** | **ClassifyCNV** + bedtools | ACMG/ClinGen 2019 **inspectable criteria**; GRCh37/38; matches clinician UX |
+| **Optional later (not lead)** | AnnotSV · CNVoyant (SHAP) · XCNV ACMG lane | Richer SV or explainable ML — subsection only, “estimate only / not a diagnosis” |
+| **Avoid as lead** | CADD-SV / opaque pathogenicity nets | Prioritisation scores ≠ ACMG breakdown |
+
+**License note:** ClassifyCNV is free for academic/research; commercial use may need a Genotek license — confirm before for-profit deploy.
+
+HF: no clear 2025 CNV foundation-model drop that beats guidelines-first for our Idiot Index; keep neural CNV scores off the lead.
+
+
+## Scope boundary (locked 2026-09-20)
+
+`/annotate` **does not** generalise across genetic-part categories (promoter, CDS, terminator, RBS, UTRs, etc.).
+
+| In scope (v1) | Out of scope (later opt-in) |
+| --- | --- |
+| CNV/SV intervals (BED / VCF-SV / coords) → ClassifyCNV ACMG breakdown | GenBank / GFF feature maps |
+| DNA/RNA `commec` biosecurity gate | SeqViz / igv.js nucleotide lanes as default |
+| AA store-only on card (no invent) | Rules/HMM genetic-parts caller |
+
+Parts layer ships only as an **explicit** later FEATURE — never invent promoter/CDS/terminator from raw DNA without a named model. Discord dark.
+
 ## Goal
 
 Observable, interpretable layer for **clinical biosecurity / chromosomal interpretation**: user-supplied CNV/SV intervals → ACMG/ClinGen-style **score breakdown** clinicians can inspect. Orthogonal to `commec` (SoC/synth hazmat gate). Research-use only. **Not a diagnosis.**

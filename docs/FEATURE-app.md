@@ -89,6 +89,11 @@ Minutes-only TTL is too short for monitoring/discussion in chat.
 
 Optional later: access code in caption (not in URL path).
 
+
+## Laboratory Parts (locked 2026-09-20)
+
+When card has GFF from `/annotate parts`: Laboratory section **Parts** with SEQ chips + TABLE (tap → product/span). Sequence body = length+hash only. Chromosomal stays CNV-only. Caption ends “research annotation — not a diagnosis.”
+
 ## Out of scope
 
 LLM layout; secrets in URL; permanent public apps; Chart.js/D3-from-scratch v1; diagnosis UI; Discord of conference links with PHI.

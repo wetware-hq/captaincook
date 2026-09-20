@@ -1043,6 +1043,9 @@ def process_paste(
     kind_label, hash12 = store_sequence_on_card(user_data, seq, kind)
     end_annotate(user_data)
     msg = MSG_SEQ_STORED.format(kind=kind_label.upper(), n=len(seq), hash12=hash12)
+    if kind in ("dna", "rna"):
+        from .annotate_parts import MSG_HINT_AFTER_SEQ
+        msg = f"{msg} {MSG_HINT_AFTER_SEQ}"
     return msg, None, gate_result, "seq"
 
 

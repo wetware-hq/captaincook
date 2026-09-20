@@ -95,9 +95,10 @@ One page, two headings — not two apps:
 
 ## Laboratory
 {preprint research; ligand/binder design summaries + image refs — from lab.ipynb; CIF/FASTA via download only}
+{Parts from /annotate parts — SEQ chips + TABLE; length+hash only; never sequence body — see TEMPLATE-annotate-parts.md}
 ```
 
-Top anchor nav (minimal): `Clinical` · `Laboratory` · `Measurements`.
+Top anchor nav (minimal): `Clinical` · `Laboratory` · `Measurements` · `Parts` (anchor into Laboratory Parts when present).
 
 **Tone fence:** peer-reviewed evidence stays under Clinical; preprint `/research` stays under Laboratory — never upgrade preprint language into peer-reviewed voice.
 

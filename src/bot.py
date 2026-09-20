@@ -41,6 +41,7 @@ from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import measure as measure_mod
 from . import annotate as annotate_mod
+from . import annotate_parts as annotate_parts_mod
 from . import board_md as board_md_mod
 from . import app_html as app_html_mod
 from . import app_deploy as app_deploy_mod
@@ -142,6 +143,7 @@ Commands:
 /measure clear [key|all] — Clear one key series or all measurements on this card.
 Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
 /annotate — One-shot coords, paste sequence, or upload FASTA/FASTQ/VCF/BED (GRCh38 default; refuse BAM/CRAM). Research use only; not a diagnosis.
+/annotate parts — Bakta genetic-parts map from the DNA/RNA sequence on the card (length + hash + feature counts). Research use only; not a diagnosis.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
@@ -2155,6 +2157,31 @@ async def cmd_annotate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     message = update.effective_message
     assert message is not None
     args = list(context.args or [])
+    if args and args[0].lower() == "parts":
+        brief, parts_payload, gate_result, status = await asyncio.to_thread(
+            annotate_parts_mod.process_parts, context.user_data
+        )
+        if status == "block" and gate_result is not None:
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_BIOSECURITY,
+                {
+                    "decision": gate_result.decision.value,
+                    "patient_id": _patient_id_from_user_data(context.user_data),
+                },
+            )
+        if status == "review" and gate_result is not None:
+            _safe_emit(
+                _user_id(update),
+                history_mod.KIND_BIOSECURITY,
+                {
+                    "decision": gate_result.decision.value,
+                    "patient_id": _patient_id_from_user_data(context.user_data),
+                },
+            )
+        # Never Discord: annotate parts stays off the mirror.
+        await message.reply_text(brief)
+        return
     if not args:
         await message.reply_text(annotate_mod.start_annotate(context.user_data))
         return

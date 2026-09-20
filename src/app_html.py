@@ -18,6 +18,7 @@ from typing import Any
 from . import board_md as board_md_mod
 from . import measure as measure_mod
 from . import annotate as annotate_mod
+from . import annotate_parts as annotate_parts_mod
 from . import onboard as onboard_mod
 from . import patient_files as patient_files_mod
 from . import store
@@ -786,6 +787,217 @@ def chromosomal_strip_js() -> str:
 </script>
 """
 
+
+
+PARTS_PANEL_FOOTER = "research annotation — not a diagnosis."
+
+
+def parts_strip_html(user_data: dict[str, Any] | None) -> str:
+    """Laboratory Parts: SEQ = class-count chips; TABLE = type · start–end · product.
+
+    Editor visual lock: no sequence dump, no Mol* in this block, empty = None yet.
+    Tap → one short panel ending with research-annotation disclaimer.
+    Consumes locked card.last_run.parts via get_parts_public (features+counts+seq_meta).
+    """
+    pub = annotate_parts_mod.get_parts_public(user_data)
+    banner = annotate_parts_mod.MSG_BANNER
+    if not pub:
+        return f'<p class="empty">{_esc(NONE_YET)}</p>'
+
+    features = pub.get("features") if isinstance(pub.get("features"), list) else []
+    if not features:
+        return f'<p class="empty">{_esc(NONE_YET)}</p>'
+
+    counts = pub.get("counts") if isinstance(pub.get("counts"), dict) else None
+    if not isinstance(counts, dict) or not counts:
+        counts = annotate_parts_mod.feature_counts(features)
+
+    # Prefer stable type order from annotate_parts, then any extras
+    order = list(getattr(annotate_parts_mod, "_TYPE_ORDER", ()) or ())
+    type_keys = [t for t in order if t in counts] + sorted(
+        k for k in counts.keys() if k not in order
+    )
+
+    chips: list[str] = []
+    for t in type_keys:
+        n = int(counts.get(t) or 0)
+        if n <= 0:
+            continue
+        klass = "parts-chip parts-type-" + _esc(t.lower().replace(" ", "-"))
+        label = f"{t} ×{n}"
+        chips.append(
+            f'<button type="button" class="{klass}" data-type="{_esc(t)}" '
+            f'title="{_esc(label)}" aria-label="{_esc(label)}">'
+            f"{_esc(label)}</button>"
+        )
+
+    seq_meta = pub.get("seq_meta") if isinstance(pub.get("seq_meta"), dict) else {}
+    length = seq_meta.get("length")
+    sha = str(seq_meta.get("sha256_12") or seq_meta.get("sha256") or "")
+    meta_line = ""
+    if length is not None:
+        hash12 = sha[:12] + ("…" if sha else "")
+        meta_line = (
+            f'<p class="parts-meta">Annotated length {_esc(str(length))} bp'
+            + (f"; sha256 {_esc(hash12)}" if hash12 else "")
+            + ". Sequence body not shown.</p>"
+        )
+
+    table_rows: list[str] = []
+    for f in features:
+        fid = _esc(str(f.get("id") or ""))
+        ftype = str(f.get("type") or "misc_feature")
+        start = f.get("start")
+        end = f.get("end")
+        span = f"{start}–{end}" if start is not None and end is not None else "—"
+        product = str(f.get("label") or ftype)
+        strand = str(f.get("strand") or ".")
+        table_rows.append(
+            f'<tr class="parts-tr" data-id="{fid}" data-type="{_esc(ftype)}" '
+            f'tabindex="0" role="button">'
+            f"<td>{_esc(ftype)}</td>"
+            f"<td>{_esc(span)}</td>"
+            f"<td>{_esc(product)}</td>"
+            f"<td>{_esc(strand)}</td>"
+            f"</tr>"
+        )
+
+    payload = json.dumps(features, ensure_ascii=False)
+    footer = _esc(PARTS_PANEL_FOOTER)
+
+    return f"""
+<p class="parts-banner">{_esc(banner)}</p>
+{meta_line}
+<div class="parts-toolbar" role="group" aria-label="Parts view">
+  <div class="parts-view-toggle" role="group" aria-label="Parts view mode">
+    <button type="button" id="parts-view-seq" class="parts-view-btn is-active"
+      aria-pressed="true">SEQ</button>
+    <button type="button" id="parts-view-table" class="parts-view-btn"
+      aria-pressed="false">TABLE</button>
+  </div>
+</div>
+<div id="parts-view-seq-frame" class="parts-view-frame" aria-label="Parts class chips">
+  <div class="parts-hscroll" role="list" aria-label="Feature class counts">
+{"".join(chips)}
+  </div>
+  <p class="parts-seq-hint">Class counts only — no nucleotide canvas.</p>
+</div>
+<div id="parts-view-table-frame" class="parts-view-frame" hidden aria-label="Parts feature table">
+  <div class="parts-table-wrap">
+    <table class="parts-table">
+      <thead>
+        <tr><th>Type</th><th>Start–end</th><th>Product</th><th>Strand</th></tr>
+      </thead>
+      <tbody>
+{"".join(table_rows)}
+      </tbody>
+    </table>
+  </div>
+</div>
+<aside class="parts-panel" id="parts-panel" hidden>
+  <h4 id="parts-panel-title">Feature</h4>
+  <p id="parts-panel-type"></p>
+  <p id="parts-panel-span"></p>
+  <p id="parts-panel-product"></p>
+  <p class="parts-panel-hint">{footer}</p>
+  <button type="button" id="parts-panel-close">Close</button>
+</aside>
+<script type="application/json" id="parts-data">{_esc(payload)}</script>
+"""
+
+
+def parts_strip_js() -> str:
+    """Client JS: SEQ↔TABLE toggle; tap row → short panel; chip filters table by type."""
+    return r"""
+<script>
+(function () {
+  var dataEl = document.getElementById("parts-data");
+  if (!dataEl) return;
+  var items = [];
+  try { items = JSON.parse(dataEl.textContent || "[]"); } catch (e) { items = []; }
+  var byId = {};
+  items.forEach(function (f) { if (f && f.id) byId[f.id] = f; });
+  var panel = document.getElementById("parts-panel");
+  var title = document.getElementById("parts-panel-title");
+  var typeEl = document.getElementById("parts-panel-type");
+  var spanEl = document.getElementById("parts-panel-span");
+  var prodEl = document.getElementById("parts-panel-product");
+  var closeBtn = document.getElementById("parts-panel-close");
+  var seqFrame = document.getElementById("parts-view-seq-frame");
+  var tableFrame = document.getElementById("parts-view-table-frame");
+  var btnSeq = document.getElementById("parts-view-seq");
+  var btnTable = document.getElementById("parts-view-table");
+
+  function show(f) {
+    if (!f || !panel) return;
+    title.textContent = f.label || f.type || "Feature";
+    typeEl.textContent = "Type: " + (f.type || "—") +
+      (f.source ? " · source " + f.source : "");
+    spanEl.textContent = "Span: " + (f.start != null && f.end != null
+      ? (f.start + "–" + f.end + (f.strand && f.strand !== "." ? " (" + f.strand + ")" : ""))
+      : "—");
+    prodEl.textContent = "Product: " + (f.label || "—");
+    panel.hidden = false;
+  }
+
+  function bindRow(el) {
+    el.addEventListener("click", function () {
+      show(byId[el.getAttribute("data-id")]);
+    });
+    el.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        show(byId[el.getAttribute("data-id")]);
+      }
+    });
+  }
+  document.querySelectorAll(".parts-tr").forEach(bindRow);
+
+  document.querySelectorAll(".parts-chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var t = chip.getAttribute("data-type") || "";
+      setView("table");
+      document.querySelectorAll(".parts-tr").forEach(function (tr) {
+        var ok = !t || tr.getAttribute("data-type") === t;
+        tr.style.display = ok ? "" : "none";
+      });
+      // Open first matching row panel if any
+      var first = null;
+      items.forEach(function (f) {
+        if (!first && f && f.type === t) first = f;
+      });
+      if (first) show(first);
+    });
+  });
+
+  if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
+
+  function setView(mode) {
+    var isSeq = mode === "seq";
+    if (seqFrame) seqFrame.hidden = !isSeq;
+    if (tableFrame) tableFrame.hidden = isSeq;
+    if (btnSeq) {
+      btnSeq.classList.toggle("is-active", isSeq);
+      btnSeq.setAttribute("aria-pressed", isSeq ? "true" : "false");
+    }
+    if (btnTable) {
+      btnTable.classList.toggle("is-active", !isSeq);
+      btnTable.setAttribute("aria-pressed", isSeq ? "false" : "true");
+    }
+    if (isSeq) {
+      document.querySelectorAll(".parts-tr").forEach(function (tr) {
+        tr.style.display = "";
+      });
+    }
+  }
+  if (btnSeq) btnSeq.addEventListener("click", function () { setView("seq"); });
+  if (btnTable) btnTable.addEventListener("click", function () { setView("table"); });
+})();
+</script>
+"""
+
+
+
 def render_app_html(
     user_data: dict[str, Any] | None,
     *,
@@ -813,6 +1025,10 @@ def render_app_html(
         user_data, clinic_md_body=clin.get("chromosomal") or ""
     )
     cnv_js = chromosomal_strip_js() if annotate_mod.get_cnv_public(user_data) else ""
+    parts_html = parts_strip_html(user_data)
+    parts_js = (
+        parts_strip_js() if annotate_parts_mod.get_parts_public(user_data) else ""
+    )
     minutes_html = (
         _md_to_safe_html(_trim_claims_and_harvard(clin["minutes"], max_claims=3))
         if clin["minutes"]
@@ -1166,6 +1382,78 @@ footer {{
   border-radius: 4px; padding: 0.3rem 0.7rem; cursor: pointer;
 }}
 
+
+.parts-banner {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.85rem; color: var(--muted); margin: 0 0 0.75rem;
+}}
+.parts-meta {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.8rem; color: var(--muted); margin: 0 0 0.5rem;
+}}
+.parts-toolbar {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end;
+  margin: 0 0 0.75rem; font-size: 0.85rem;
+}}
+.parts-view-toggle {{
+  display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden;
+}}
+.parts-view-btn {{
+  font: inherit; font-size: 0.8rem; border: 0; background: #fff;
+  padding: 0.3rem 0.7rem; cursor: pointer; color: var(--muted);
+}}
+.parts-view-btn.is-active {{ background: var(--banner-bg); color: var(--ink); font-weight: 600; }}
+.parts-view-frame {{ margin: 0 0 0.75rem; }}
+.parts-hscroll {{
+  display: flex; flex-wrap: nowrap; gap: 0.4rem;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  padding: 0.25rem 0 0.5rem;
+}}
+.parts-chip {{
+  flex: 0 0 auto;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.8rem; border: 1px solid var(--rule); border-radius: 999px;
+  background: #f3f6f8; color: var(--ink);
+  padding: 0.35rem 0.75rem; cursor: pointer; white-space: nowrap;
+}}
+.parts-chip:hover {{ background: #e8eef2; }}
+.parts-seq-hint {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.75rem; color: var(--muted); margin: 0.25rem 0 0;
+}}
+.parts-table-wrap {{
+  overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px;
+  max-height: 22rem; overflow-y: auto;
+}}
+.parts-table {{
+  width: 100%; border-collapse: collapse;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.82rem;
+}}
+.parts-table th, .parts-table td {{
+  text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}}
+.parts-table th {{
+  position: sticky; top: 0; background: var(--banner-bg); color: var(--muted);
+  font-weight: 600; z-index: 1;
+}}
+.parts-tr {{ cursor: pointer; }}
+.parts-tr:hover {{ background: #fafafa; }}
+.parts-panel {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px;
+  background: #fff; padding: 0.85rem 1rem; margin: 0.75rem 0 0;
+}}
+.parts-panel h4 {{ margin: 0.5rem 0 0.35rem; font-size: 0.95rem; }}
+.parts-panel-hint {{ color: var(--muted); font-size: 0.8rem; font-style: italic; }}
+#parts-panel-close {{
+  font: inherit; font-size: 0.85rem; margin-top: 0.5rem;
+  border: 1px solid var(--rule); background: var(--banner-bg);
+  border-radius: 4px; padding: 0.3rem 0.7rem; cursor: pointer;
+}}
+
 {mol_extra_css}
 </style>
 {mol_cdn_css}
@@ -1201,6 +1489,8 @@ footer {{
   </section>
   <section id="laboratory">
     <h2>Laboratory</h2>
+    <h3>Parts</h3>
+    {parts_html}
     <h3>Designs</h3>
     {designs_html}{structures_block}
     <h3>Preprint literature</h3>
@@ -1242,6 +1532,7 @@ footer {{
 {mol_init_script}
 {chem_init_script}
 {cnv_js}
+{parts_js}
 </body>
 </html>
 """

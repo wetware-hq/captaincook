@@ -64,7 +64,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | Three intakes: one-shot coords (GRCh38 default), raw sequence → secure card SEQUENCE (length+hash), or upload FASTA/FASTQ/VCF/BED (refuse BAM/CRAM). ClassifyCNV Chromosomal + `/app` SEQ↔TABLE. Card required. Not a diagnosis; Discord dark. |
+| `/annotate` | One-shot CNV coords / paste / upload (ClassifyCNV → Chromosomal). `/annotate parts` → Bakta genetic-parts map on card DNA/RNA → `last_run.parts` for `/app` Laboratory Parts (features + counts + seq_meta; no gff3/seq body). Card required. Not a diagnosis; Discord dark. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 

@@ -28,6 +28,13 @@ Ligand design (/design ligand) requires at least ten molecules (about US$0.25) a
 /annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
 ```
 
+## HELP `/annotate parts` one-liner (locked)
+
+```
+/annotate parts — Bakta genetic-parts map from the DNA/RNA sequence on the card (length + hash + feature counts). Research use only; not a diagnosis.
+```
+
+
 ## HELP `/trials` one-liner (locked)
 
 ```
