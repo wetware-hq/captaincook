@@ -70,6 +70,32 @@ Telegram stays thin: MD summary + `/app` link. Canvas on HTTPS page only. White/
 
 
 
+
+
+## NGS clinic compatibility (locked 2026-09-20 — user)
+
+Compatible with **clinic-adopted NGS** panel / exome / WGS / long-read SV exports.
+
+| Require | Refuse |
+| --- | --- |
+| **BED** or **VCF-SV** (and `chr:start-end DEL\|DUP` lines) | FASTA / AA pasted as “chromosome” |
+| **Assembly tag** — GRCh38 default; GRCh37 accepted; helper if missing | Silent build guess |
+| Same tap→detail `/app` strip for short-read or long-read calls | Hardware-specific chrome |
+
+ClassifyCNV/ACMG path stays **assembly-aware** so bars don’t mis-map builds. Discord dark.
+
+## Plasmid-viewer inspiration (locked 2026-09-20 — user / NYSRG)
+
+Take **interaction**, not construct chrome:
+
+| Keep | Drop for Clinical Chromosomal |
+| --- | --- |
+| Feature lanes · tap → detail panel | Circular plasmid map |
+| Class/colour coding | Enzyme rings / bp letter canvas |
+| Clean linear strip on chr | Open Vector Editor / SeqViz as default |
+
+`/app` Clinical Chromosomal = linear strip + class colours + ACMG breakdown + gene → `/evidence`/`/variant`. Bioscreen remains the hard gate beside it. SeqViz/igv letter views stay opt-in later.
+
 ## Informative · interactive · useful (locked 2026-09-20 — user)
 
 Minimise *busywork* interaction — **not** a static poster. Clinicians must get value from the layer.

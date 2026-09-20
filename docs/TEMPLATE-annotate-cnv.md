@@ -10,6 +10,27 @@
 /annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
 ```
 
+
+## NGS clinic paste (assembly-aware)
+
+Prefer **BED / VCF-SV** from panel, exome, or WGS exporters. Require or prompt for assembly (**GRCh38** default; **GRCh37** accepted).
+
+Arm add-on:
+
+```
+Include the genome build when you can (GRCh38 preferred; GRCh37 accepted). Example:
+##assembly=GRCh38
+chr17:43044295-43125483 DEL
+```
+
+Missing assembly helper:
+
+```
+Please name the genome build (GRCh38 or GRCh37) on the first line, then your BED or VCF-SV intervals. Chromosomal bars cannot be placed safely without a build.
+```
+
+Refuse FASTA pasted as a chromosome path — point users to interval formats, not nucleotide canvases.
+
 ## Arm
 
 ```
@@ -95,6 +116,11 @@ Banner if needed:
 Research use only. Chromosomal annotations are not a diagnosis.
 ```
 
+
+
+## UX inspiration (plasmid viewers → clinical)
+
+Borrow **tap → detail** only. Do **not** ship circular plasmid chrome, enzyme rings, or a nucleotide canvas in Clinical Chromosomal. Linear chromosomal strip + class colours + breakdown panel; gene may deep-link to `/evidence` or `/variant`. SeqViz letter views stay opt-in later.
 
 ## `/app` Clinical strip (interactive — after v1a)
 

@@ -24,7 +24,7 @@ Captain Cook accepts a protein sequence or a short natural-language request and 
 | Biometrics | `/onboard` stores secret age, sex, weight, and height on the card. `/load` shows only Patient: on file or incomplete — never raw values. |
 | Patient files | `/note` appends session notes to `patient_files[]`, separate from biometric secrets. Bodies are not shown in `/load` or list output. |
 | Patient store | Per patient: `clinic.md` + `lab.ipynb` + `search.json`. Handlers emit events; one background daemon is the sole file writer (DOI-idempotent Evidence upserts; Harvard bottoms never stripped). Design hits index as `ligand:` or `binder:` in `search.json` and land in `lab.ipynb` only. |
-| Privacy | Biometric secrets never appear as raw values in `clinic.md` / `lab.ipynb`. Secrets and note bodies never enter language-model prompts, lit briefs, or captions. `/scribe` must not invent decisions absent from the source. Discord outbound is optional and **not live** until `DISCORD_WEBHOOK_URL` is set; patient files are never mirrored. |
+| Privacy | Biometric secrets never appear as raw values in `clinic.md` / `lab.ipynb`. Secrets and note bodies never enter language-model prompts, lit briefs, or captions. `/scribe` must not invent decisions absent from the source. Discord outbound is optional and **not live** until `DISCORD_WEBHOOK_URL` is set; patient files, `/annotate` results, and `/app` live links are never mirrored. |
 | Replay | `/view` returns the cached photo and caption when the new card fingerprint matches a prior completed run. Cache is chat-session only and uses no GPU. Fingerprints exclude patient secrets and patient files. |
 | Spend gate | `/design ligand` or `/design binder` estimates cost and waits (explicit mode; bare `/design` asks which). `/confirm` starts the pending job. `/cancel` aborts. |
 
@@ -59,12 +59,12 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/app` | Assembles a Markdown case-conference packet; optional short-lived web view when `APP_DEPLOY_*` is set (Mol* (mmCIF) + 3Dmol (ligand SMILES/SDF) in Structures). |
+| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (linear CNV strip, tap → ACMG breakdown; GRCh38/37). **Laboratory** includes Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
 | `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | Paste CNV/SV intervals (BED / VCF-SV / `chr:start-end DEL|DUP`) → ACMG/ClinGen-style chromosomal annotation (ClassifyCNV). Helper-first; orthogonal bioscreen; not a diagnosis. |
+| `/annotate` | NGS clinic paste: **BED / VCF-SV** (or `chr:start-end DEL|DUP`) with **GRCh38** (default) or **GRCh37** tagged; helper if assembly missing. ClassifyCNV ACMG/ClinGen breakdown → `clinic.md ## Chromosomal` + live `/app` strip. Orthogonal bioscreen; refuse FASTA-as-chromosome / AA-invented DNA; **not a diagnosis**; Discord dark. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 
