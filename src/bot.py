@@ -141,7 +141,7 @@ Commands:
 /measure list — List keys and counts. Secret measures appear only as a count.
 /measure clear [key|all] — Clear one key series or all measurements on this card.
 Messy one-liners are OK when they clearly name a vital (e.g. HR was 72, BP 120 over 80). Free paragraphs are not parsed.
-/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
+/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) with GRCh38 or GRCh37 tagged for ACMG/ClinGen-style annotation. Helper coaches bad paste or missing assembly. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
 /research `<topic>` — Retrieve a Markdown brief of recent bioRxiv or medRxiv preprints for the topic. The reply is one document. This is for research use only and is not clinical advice.
 /evidence `<question>` — Retrieve a Markdown evidence brief from peer-reviewed Europe PMC / MEDLINE articles for the question. Preprints are excluded. The reply is one document. This is for research use only and is not clinical advice.
 /variant `<gene> <change>` — Retrieve a Markdown variant brief grounded in peer-reviewed Europe PMC / MEDLINE articles for a gene and change (structured or natural language). Bare /variant uses the card gene and variant when both are present. Specialty-agnostic. Research use only; not a diagnosis and not dosing advice.
