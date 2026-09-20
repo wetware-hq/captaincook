@@ -800,7 +800,6 @@ def parts_strip_html(user_data: dict[str, Any] | None) -> str:
     Consumes locked card.last_run.parts via get_parts_public (features+counts+seq_meta).
     """
     pub = annotate_parts_mod.get_parts_public(user_data)
-    banner = annotate_parts_mod.MSG_BANNER
     if not pub:
         return f'<p class="empty">{_esc(NONE_YET)}</p>'
 
@@ -840,7 +839,7 @@ def parts_strip_html(user_data: dict[str, Any] | None) -> str:
         meta_line = (
             f'<p class="parts-meta">Annotated length {_esc(str(length))} bp'
             + (f"; sha256 {_esc(hash12)}" if hash12 else "")
-            + ". Sequence body not shown.</p>"
+            + ". Sequence body not shown. Research annotation — not a diagnosis.</p>"
         )
 
     table_rows: list[str] = []
@@ -866,7 +865,6 @@ def parts_strip_html(user_data: dict[str, Any] | None) -> str:
     footer = _esc(PARTS_PANEL_FOOTER)
 
     return f"""
-<p class="parts-banner">{_esc(banner)}</p>
 {meta_line}
 <div class="parts-toolbar" role="group" aria-label="Parts view">
   <div class="parts-view-toggle" role="group" aria-label="Parts view mode">
@@ -1328,7 +1326,7 @@ footer {{
   font-size: 0.75rem; color: var(--muted); text-align: right;
 }}
 .cnv-hscroll {{
-  display: flex; flex-wrap: nowrap; gap: 0.4rem; align-items: center;
+  display: flex; flex-wrap: nowrap; gap: 0.55rem; align-items: center;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   background: #fff; border: 1px solid var(--rule); border-radius: 4px;
   padding: 0.4rem 0.5rem; min-height: 2.25rem;
@@ -1446,7 +1444,7 @@ footer {{
   font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px;
   background: #fff; padding: 0.85rem 1rem; margin: 0.75rem 0 0;
 }}
-.parts-panel h4 {{ margin: 0.5rem 0 0.35rem; font-size: 0.95rem; }}
+.parts-panel h4 {{ margin: 0 0 0.35rem; font-size: 0.95rem; }}
 .parts-panel-hint {{ color: var(--muted); font-size: 0.8rem; font-style: italic; }}
 #parts-panel-close {{
   font: inherit; font-size: 0.85rem; margin-top: 0.5rem;
