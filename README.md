@@ -59,12 +59,12 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/note clear` | Clears patient files; biometric secrets unchanged. |
 | `/scribe` | Arms the next message as meeting notes or a transcript (unlinked). |
 | `/scribe <text>` | Organises short text into meeting minutes immediately. |
-| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (linear CNV strip, tap → ACMG breakdown; GRCh38/37). **Laboratory** includes Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
+| `/app` | Case-conference MD + optional TTL live view (`APP_DEPLOY_*`). **Clinical** includes Chromosomal (**SEQ** horizontal labeled CNV chips + **TABLE** toggle; tap → ACMG breakdown; GRCh38/37). **Laboratory** includes Structures (Mol* mmCIF + 3Dmol ligands). Discord never mirrors `/app` or annotate. |
 | `/app update` | Same as `/app` — fresh snapshot (not an incremental merge). |
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | NGS clinic paste: **BED / VCF-SV** (or `chr:start-end DEL|DUP`) with **GRCh38** (default) or **GRCh37** tagged; helper if assembly missing. ClassifyCNV ACMG/ClinGen breakdown → `clinic.md ## Chromosomal` + live `/app` strip. Orthogonal bioscreen; refuse FASTA-as-chromosome / AA-invented DNA; **not a diagnosis**; Discord dark. |
+| `/annotate` | NGS clinic paste: **BED / VCF-SV** (or `chr:start-end DEL|DUP`) with **GRCh38** (default) or **GRCh37** tagged; helper if assembly missing. ClassifyCNV ACMG/ClinGen breakdown → `clinic.md ## Chromosomal` + live `/app` **SEQ/TABLE** strip. Orthogonal bioscreen; refuse FASTA-as-chromosome / AA-invented DNA; **not a diagnosis**; Discord dark. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 

@@ -29,7 +29,7 @@ Observable, interpretable layer for **clinical biosecurity / chromosomal interpr
 | Surface | Behavior |
 | --- | --- |
 | Telegram | Helper-first paste (like `/measure`); MD brief: class + **criteria breakdown bullets** + overlapped genes + “not a diagnosis” + cites |
-| `/app` Clinical | Section **Chromosomal** — scan-first: compact track/ideogram of intervals + ≤3 bullets + Harvard; secrets never shown |
+| `/app` Clinical | Section **Chromosomal** — SEQ horizontal labeled chips + TABLE toggle (tap → ACMG); ≤3 bullets + Harvard; secrets never shown |
 | Viz | Simple chromosomal **feature tracks** (interval lanes, zoomable in HTML app) — Benchling-like readability, not dense coordinate dumps in chat |
 | Out of v1 | Full genome browser / Benchling editor clone inside Telegram |
 
@@ -84,6 +84,18 @@ Compatible with **clinic-adopted NGS** panel / exome / WGS / long-read SV export
 
 ClassifyCNV/ACMG path stays **assembly-aware** so bars don’t mis-map builds. Discord dark.
 
+
+## SEQ ↔ TABLE frames (locked 2026-09-20 — user)
+
+Primary clinician frame in `/app` Clinical Chromosomal:
+
+| Frame | Behavior |
+| --- | --- |
+| **SEQ** (default) | Horizontal-scrolling sequence/interval strip so **text labels stay legible** |
+| **TABLE** | Toggle: simple colour-coded vertical feature table (by ACMG class) |
+
+Both frames: **tap/select → ACMG breakdown panel**; gene → `/evidence`/`/variant`. Still no 1-bp letter zoom as default. Discord dark.
+
 ## Plasmid-viewer inspiration (locked 2026-09-20 — user / NYSRG)
 
 Take **interaction**, not construct chrome:
@@ -120,7 +132,7 @@ Still abstract away nucleotide/AA letter resolution. Interaction is at **interva
 | Tap/open `/app` section; optional one-click “details” | Full Benchling editor, pan/zoom nucleotide tracks in v1 |
 | MD brief + simple ideogram/track of **intervals** | SeqViz/igv at residue resolution as default |
 
-**v1a lead experience:** Telegram MD (class + breakdown + genes) + `/app` Clinical **interval strip** (chr bars, colored DEL/DUP).  
+**v1a lead experience:** Telegram MD (class + breakdown + genes) + `/app` Clinical **SEQ** horizontal labeled chips (scroll sideways) with **TABLE** toggle (color-coded features; tap → ACMG breakdown; GRCh38/37).  
 **SeqViz / igv.js nucleotide views:** deferred unless user asks “sequence detail” — not the default clinician path.
 
 ## Staged ship

@@ -122,6 +122,13 @@ Research use only. Chromosomal annotations are not a diagnosis.
 
 Borrow **tap → detail** only. Do **not** ship circular plasmid chrome, enzyme rings, or a nucleotide canvas in Clinical Chromosomal. Linear chromosomal strip + class colours + breakdown panel; gene may deep-link to `/evidence` or `/variant`. SeqViz letter views stay opt-in later.
 
+
+## SEQ ↔ TABLE toggle (Clinical Chromosomal)
+
+- **SEQ (primary):** horizontal-scrolling strip so text labels stay legible; tap bar → ACMG breakdown.  
+- **TABLE:** colour-coded feature rows by ACMG class (vertical scroll); same tap → breakdown.  
+- Toggle label copy: `SEQ` | `TABLE`. No pan/zoom genome browser in v1.
+
 ## `/app` Clinical strip (interactive — after v1a)
 
 - Colored CNV bars on a chromosomal strip; **tap a bar** opens a breakdown panel (class + criteria bullets + key genes).  

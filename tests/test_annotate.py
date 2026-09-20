@@ -198,11 +198,22 @@ class TestAppStrip(unittest.TestCase):
         self.assertIn("cnv-filter-sv", out)
         self.assertIn("cnv-panel", out)
         self.assertIn("cnv-bar", out)
+        self.assertIn("cnv-chip", out)
+        self.assertIn("cnv-view-seq", out)
+        self.assertIn("cnv-view-table", out)
+        self.assertIn("cnv-view-seq-frame", out)
+        self.assertIn("cnv-view-table-frame", out)
+        self.assertIn("cnv-tr", out)
+        self.assertIn("cnv-hscroll", out)
         self.assertIn("Research use only", out)
+        self.assertIn("KRAS", out)
         js = app_html.chromosomal_strip_js()
         self.assertIn("/evidence", js)
         self.assertIn("/variant", js)
         self.assertIn("not a diagnosis", js)
+        self.assertIn("cnv-view-seq-frame", js)
+        self.assertIn("cnv-tr", js)
+        self.assertIn("setView", js)
 
 
 if __name__ == "__main__":

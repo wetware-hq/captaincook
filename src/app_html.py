@@ -523,14 +523,13 @@ def chromosomal_strip_html(
     *,
     clinic_md_body: str = "",
 ) -> str:
-    """Interactive CNV strip: tap bar → breakdown; filter chr/DEL/DUP; gene→evidence/variant hints.
+    """Interactive CNV strip: SEQ chips (h-scroll) ↔ TABLE; tap → ACMG panel.
 
-    No 1-bp / 1-AA letter zoom. SeqViz/igv deferred.
+    Filters: chromosome / DEL·DUP. No 1-bp / 1-AA letter zoom. SeqViz/igv deferred.
     """
     cnvs = annotate_mod.get_cnv_public(user_data)
     banner = annotate_mod.MSG_BANNER
     if not cnvs:
-        # Fall back to clinic prose only
         if clinic_md_body and _nonempty_section(clinic_md_body):
             return (
                 f'<p class="cnv-banner">{_esc(banner)}</p>\n'
@@ -538,46 +537,73 @@ def chromosomal_strip_html(
             )
         return f'<p class="empty">{_esc(NONE_YET)}</p>'
 
-    # Collect filter options
     chroms = sorted({str(c.get("chrom") or "") for c in cnvs if c.get("chrom")})
     payload = json.dumps(cnvs, ensure_ascii=False)
     chrom_opts = "".join(
         f'<option value="{_esc(c)}">{_esc(c)}</option>' for c in chroms
     )
-    # Ideogram rows: one row per chromosome that has a CNV
-    rows_html: list[str] = []
+
     by_chr: dict[str, list[dict[str, Any]]] = {}
     for c in cnvs:
         ch = str(c.get("chrom") or "chr?")
         by_chr.setdefault(ch, []).append(c)
+
+    def _class_short(raw: str, limit: int = 28) -> str:
+        s = (raw or "—").strip() or "—"
+        return s if len(s) <= limit else (s[: limit - 1] + "…")
+
+    def _genes_short(c: dict[str, Any], limit: int = 3) -> str:
+        glist = c.get("dosage_genes") or c.get("coding_genes") or []
+        names = [str(g) for g in glist if g][:limit]
+        if not names:
+            return "—"
+        extra = len(glist) - len(names)
+        return ", ".join(names) + (f" +{extra}" if extra > 0 else "")
+
+    rows_html: list[str] = []
     for ch in sorted(by_chr.keys(), key=lambda x: (_CHR_MB.get(x, 999), x)):
-        length_mb = _CHR_MB.get(ch, 100.0) or 100.0
-        bars: list[str] = []
+        chips: list[str] = []
         for c in by_chr[ch]:
-            start = float(c.get("start") or 0)
-            end = float(c.get("end") or 0)
-            left = max(0.0, min(100.0, (start / (length_mb * 1_000_000)) * 100.0))
-            width = max(0.4, min(100.0 - left, ((end - start) / (length_mb * 1_000_000)) * 100.0))
             sv = str(c.get("svtype") or "DEL").upper()
             klass = "cnv-del" if sv == "DEL" else "cnv-dup"
             cid = _esc(str(c.get("id") or ""))
-            title = _esc(f"{c.get('label')} — {c.get('classification')}")
-            bars.append(
-                f'<button type="button" class="cnv-bar {klass}" data-id="{cid}" '
-                f'data-chrom="{_esc(ch)}" data-sv="{_esc(sv)}" '
-                f'style="left:{left:.2f}%;width:{width:.2f}%;" '
-                f'title="{title}" aria-label="{title}"></button>'
+            span = str(c.get("span") or "")
+            clf = str(c.get("classification") or "—")
+            chip_txt = f"{ch}:{span} {sv} · {_class_short(clf)}"
+            title = _esc(f"{c.get('label') or chip_txt} — {clf}")
+            chips.append(
+                f'<button type="button" class="cnv-bar cnv-chip {klass}" '
+                f'data-id="{cid}" data-chrom="{_esc(ch)}" data-sv="{_esc(sv)}" '
+                f'title="{title}" aria-label="{title}">'
+                f"{_esc(chip_txt)}</button>"
             )
         rows_html.append(
             f'<div class="cnv-row" data-chrom="{_esc(ch)}">'
             f'<span class="cnv-chr-label">{_esc(ch)}</span>'
-            f'<div class="cnv-track">{"".join(bars)}</div>'
+            f'<div class="cnv-hscroll" role="list" aria-label="{_esc(ch)} CNVs">'
+            f'{"".join(chips)}</div>'
             f"</div>"
+        )
+
+    table_rows: list[str] = []
+    for c in cnvs:
+        ch = str(c.get("chrom") or "chr?")
+        sv = str(c.get("svtype") or "DEL").upper()
+        klass = "cnv-del" if sv == "DEL" else "cnv-dup"
+        cid = _esc(str(c.get("id") or ""))
+        span = _esc(str(c.get("span") or "—"))
+        clf = _esc(str(c.get("classification") or "—"))
+        genes = _esc(_genes_short(c))
+        table_rows.append(
+            f'<tr class="cnv-tr {klass}" data-id="{cid}" data-chrom="{_esc(ch)}" '
+            f'data-sv="{_esc(sv)}" tabindex="0" role="button">'
+            f"<td>{_esc(ch)}</td><td>{_esc(sv)}</td><td>{span}</td>"
+            f"<td>{clf}</td><td>{genes}</td></tr>"
         )
 
     return f"""
 <p class="cnv-banner">{_esc(banner)}</p>
-<div class="cnv-toolbar" role="group" aria-label="Chromosomal filters">
+<div class="cnv-toolbar" role="group" aria-label="Chromosomal filters and view">
   <label>Chromosome
     <select id="cnv-filter-chr">
       <option value="">All</option>
@@ -591,9 +617,29 @@ def chromosomal_strip_html(
       <option value="DUP">DUP</option>
     </select>
   </label>
+  <div class="cnv-view-toggle" role="group" aria-label="Chromosomal view">
+    <button type="button" id="cnv-view-seq" class="cnv-view-btn is-active"
+      aria-pressed="true">SEQ</button>
+    <button type="button" id="cnv-view-table" class="cnv-view-btn"
+      aria-pressed="false">TABLE</button>
+  </div>
 </div>
-<div class="cnv-strip" id="cnv-strip" aria-label="CNV interval strip">
+<div id="cnv-view-seq-frame" class="cnv-view-frame" aria-label="CNV sequence chips">
+  <div class="cnv-strip" id="cnv-strip">
 {"".join(rows_html)}
+  </div>
+</div>
+<div id="cnv-view-table-frame" class="cnv-view-frame" hidden aria-label="CNV features table">
+  <div class="cnv-table-wrap">
+    <table class="cnv-table">
+      <thead>
+        <tr><th>Chrom</th><th>Type</th><th>Span</th><th>Classification</th><th>Genes</th></tr>
+      </thead>
+      <tbody>
+{"".join(table_rows)}
+      </tbody>
+    </table>
+  </div>
 </div>
 <aside class="cnv-panel" id="cnv-panel" hidden>
   <h4 id="cnv-panel-title">Interval</h4>
@@ -612,7 +658,7 @@ def chromosomal_strip_html(
 
 
 def chromosomal_strip_js() -> str:
-    """Client JS for tap → panel, filters, gene→/evidence|/variant hints."""
+    """Client JS: SEQ↔TABLE toggle, tap → panel, filters, gene hints."""
     return r"""
 <script>
 (function () {
@@ -629,6 +675,11 @@ def chromosomal_strip_js() -> str:
   var crit = document.getElementById("cnv-panel-criteria");
   var genes = document.getElementById("cnv-panel-genes");
   var closeBtn = document.getElementById("cnv-panel-close");
+  var seqFrame = document.getElementById("cnv-view-seq-frame");
+  var tableFrame = document.getElementById("cnv-view-table-frame");
+  var btnSeq = document.getElementById("cnv-view-seq");
+  var btnTable = document.getElementById("cnv-view-table");
+
   function show(c) {
     if (!c || !panel) return;
     title.textContent = c.label || (c.chrom + " " + c.svtype);
@@ -671,25 +722,60 @@ def chromosomal_strip_js() -> str:
     }
     panel.hidden = false;
   }
-  document.querySelectorAll(".cnv-bar").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      show(byId[btn.getAttribute("data-id")]);
+
+  function bindOpen(el) {
+    el.addEventListener("click", function () {
+      show(byId[el.getAttribute("data-id")]);
     });
-  });
+    el.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        show(byId[el.getAttribute("data-id")]);
+      }
+    });
+  }
+  document.querySelectorAll(".cnv-bar").forEach(bindOpen);
+  document.querySelectorAll(".cnv-tr").forEach(bindOpen);
+
   if (closeBtn) closeBtn.addEventListener("click", function () { panel.hidden = true; });
+
+  function setView(mode) {
+    var isSeq = mode === "seq";
+    if (seqFrame) seqFrame.hidden = !isSeq;
+    if (tableFrame) tableFrame.hidden = isSeq;
+    if (btnSeq) {
+      btnSeq.classList.toggle("is-active", isSeq);
+      btnSeq.setAttribute("aria-pressed", isSeq ? "true" : "false");
+    }
+    if (btnTable) {
+      btnTable.classList.toggle("is-active", !isSeq);
+      btnTable.setAttribute("aria-pressed", isSeq ? "false" : "true");
+    }
+  }
+  if (btnSeq) btnSeq.addEventListener("click", function () { setView("seq"); });
+  if (btnTable) btnTable.addEventListener("click", function () { setView("table"); });
+
   function applyFilters() {
     var chr = (document.getElementById("cnv-filter-chr") || {}).value || "";
     var sv = (document.getElementById("cnv-filter-sv") || {}).value || "";
     document.querySelectorAll(".cnv-row").forEach(function (row) {
       var rch = row.getAttribute("data-chrom") || "";
-      var showRow = !chr || rch === chr;
-      row.style.display = showRow ? "" : "none";
+      var anyVisible = false;
       row.querySelectorAll(".cnv-bar").forEach(function (bar) {
         var bsv = bar.getAttribute("data-sv") || "";
         var bch = bar.getAttribute("data-chrom") || "";
         var ok = (!chr || bch === chr) && (!sv || bsv === sv);
         bar.style.display = ok ? "" : "none";
+        if (ok) anyVisible = true;
       });
+      var showRow = (!chr || rch === chr) && anyVisible;
+      row.style.display = showRow ? "" : "none";
+    });
+    document.querySelectorAll(".cnv-tr").forEach(function (tr) {
+      var tch = tr.getAttribute("data-chrom") || "";
+      var tsv = tr.getAttribute("data-sv") || "";
+      var ok = (!chr || tch === chr) && (!sv || tsv === sv);
+      tr.style.display = ok ? "" : "none";
     });
   }
   var fchr = document.getElementById("cnv-filter-chr");
@@ -699,7 +785,6 @@ def chromosomal_strip_js() -> str:
 })();
 </script>
 """
-
 
 def render_app_html(
     user_data: dict[str, Any] | None,
@@ -936,6 +1021,8 @@ figure.mol-fig figcaption, figure.chem-fig figcaption {
   --banner-bg: #f7f7f5;
   --link: #3a5a7a;
   --max: 42rem;
+  --cnv-del: #c45c5c;
+  --cnv-dup: #3d7a9a;
 }}
 * {{ box-sizing: border-box; }}
 html, body {{
@@ -992,6 +1079,93 @@ footer {{
   display: none; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   padding: 2rem 1.25rem; max-width: var(--max); margin: 0 auto;
 }}
+.cnv-banner {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.85rem; color: var(--muted); margin: 0 0 0.75rem;
+}}
+.cnv-toolbar {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end;
+  margin: 0 0 0.75rem; font-size: 0.85rem;
+}}
+.cnv-toolbar label {{ display: flex; flex-direction: column; gap: 0.2rem; color: var(--muted); }}
+.cnv-toolbar select {{
+  font: inherit; color: var(--ink); background: #fff;
+  border: 1px solid var(--rule); border-radius: 4px; padding: 0.25rem 0.4rem;
+}}
+.cnv-view-toggle {{
+  display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden;
+}}
+.cnv-view-btn {{
+  font: inherit; font-size: 0.8rem; letter-spacing: 0.02em;
+  background: #fff; color: var(--muted); border: 0; padding: 0.35rem 0.7rem; cursor: pointer;
+}}
+.cnv-view-btn + .cnv-view-btn {{ border-left: 1px solid var(--rule); }}
+.cnv-view-btn.is-active {{ background: var(--banner-bg); color: var(--ink); font-weight: 600; }}
+.cnv-view-frame {{ margin: 0 0 0.75rem; }}
+.cnv-strip {{ display: flex; flex-direction: column; gap: 0.5rem; }}
+.cnv-row {{
+  display: grid; grid-template-columns: 3.5rem 1fr; gap: 0.5rem; align-items: center;
+}}
+.cnv-chr-label {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.75rem; color: var(--muted); text-align: right;
+}}
+.cnv-hscroll {{
+  display: flex; flex-wrap: nowrap; gap: 0.4rem; align-items: center;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  background: #fff; border: 1px solid var(--rule); border-radius: 4px;
+  padding: 0.4rem 0.5rem; min-height: 2.25rem;
+}}
+.cnv-chip, .cnv-bar.cnv-chip {{
+  position: static; flex: 0 0 auto; width: auto; height: auto; left: auto;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.78rem; line-height: 1.25; white-space: nowrap;
+  border: 1px solid var(--rule); border-radius: 1.25rem; padding: 0.28rem 0.65rem;
+  cursor: pointer; background: #fafafa; color: var(--ink);
+}}
+.cnv-chip.cnv-del, .cnv-bar.cnv-del {{
+  background: color-mix(in srgb, var(--cnv-del) 22%, #fff);
+  border-color: color-mix(in srgb, var(--cnv-del) 45%, var(--rule));
+}}
+.cnv-chip.cnv-dup, .cnv-bar.cnv-dup {{
+  background: color-mix(in srgb, var(--cnv-dup) 22%, #fff);
+  border-color: color-mix(in srgb, var(--cnv-dup) 45%, var(--rule));
+}}
+.cnv-table-wrap {{
+  max-height: 18rem; overflow-y: auto; border: 1px solid var(--rule); border-radius: 4px;
+  background: #fff;
+}}
+.cnv-table {{
+  width: 100%; border-collapse: collapse;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.82rem;
+}}
+.cnv-table th, .cnv-table td {{
+  text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}}
+.cnv-table th {{
+  position: sticky; top: 0; background: var(--banner-bg); color: var(--muted);
+  font-weight: 600; z-index: 1;
+}}
+.cnv-tr {{ cursor: pointer; }}
+.cnv-tr:hover {{ background: #fafafa; }}
+.cnv-tr.cnv-del {{ box-shadow: inset 3px 0 0 var(--cnv-del); }}
+.cnv-tr.cnv-dup {{ box-shadow: inset 3px 0 0 var(--cnv-dup); }}
+.cnv-panel {{
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px;
+  background: #fff; padding: 0.85rem 1rem; margin: 0.75rem 0 0;
+}}
+.cnv-panel h4, .cnv-panel h5 {{ margin: 0.5rem 0 0.35rem; font-size: 0.95rem; }}
+.cnv-panel-hint {{ color: var(--muted); font-size: 0.8rem; }}
+#cnv-panel-close {{
+  font: inherit; font-size: 0.85rem; margin-top: 0.5rem;
+  border: 1px solid var(--rule); background: var(--banner-bg);
+  border-radius: 4px; padding: 0.3rem 0.7rem; cursor: pointer;
+}}
+
 {mol_extra_css}
 </style>
 {mol_cdn_css}
