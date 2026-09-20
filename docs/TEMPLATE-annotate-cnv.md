@@ -7,40 +7,40 @@
 ## HELP one-liner
 
 ```
-/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) for ACMG/ClinGen-style annotation. Helper coaches bad paste. Research use only; not a diagnosis. Runs after the biosecurity screen when DNA/RNA is involved.
+/annotate — One-shot: `/annotate chr12:25205246-25250929 DUP` (GRCh38 default). Or /annotate then paste. BED/VCF-SV advanced. Helper coaches bad paste. Research use only; not a diagnosis.
 ```
 
 
-## NGS clinic paste (assembly-aware)
+## Dual intake
 
-Prefer **BED / VCF-SV** from panel, exome, or WGS exporters. Require or prompt for assembly (**GRCh38** default; **GRCh37** accepted).
+- **Coords** → Chromosomal / ACMG (GRCh38 default).
+- **Raw sequence** → secure card SEQUENCE attribute; Telegram/`/app` show **length + hash only**; DNA/RNA via `commec`; AA store only (never invent CNVs). Never Discord / LM dump.
 
-Arm add-on:
+## Paste UX (simplified)
 
-```
-Include the genome build when you can (GRCh38 preferred; GRCh37 accepted). Example:
-##assembly=GRCh38
-chr17:43044295-43125483 DEL
-```
-
-Missing assembly helper:
-
-```
-Please name the genome build (GRCh38 or GRCh37) on the first line, then your BED or VCF-SV intervals. Chromosomal bars cannot be placed safely without a build.
-```
-
-Refuse FASTA pasted as a chromosome path — point users to interval formats, not nucleotide canvases.
+- **Default assembly:** GRCh38 (tag `##assembly=GRCh37` only when needed).
+- **One-shot:** `/annotate chr12:25205246-25250929 DUP` — no second message.
+- **Helper:** one example line only + “Free paragraphs are not parsed” + `/cancel`.
+- **Advanced:** BED / VCF-SV multi-line paste still accepted.
+- **Card:** still required.
 
 ## Arm
 
 ```
-Send chromosomal intervals in the next message, one per line. Examples:
-chr17:43044295-43125483 DEL
+Send one interval, for example:
 chr12:25205246-25250929 DUP
-Or paste BED / VCF-SV lines.
 
-Amino-acid sequences cannot be annotated as chromosomal CNVs here. Research use only; this is not a diagnosis. Send /cancel to stop.
+GRCh38 is the default (add ##assembly=GRCh37 only if needed). BED / VCF-SV multi-line paste also works. Research use only; this is not a diagnosis. Send /cancel to stop.
 ```
+
+## Helper (bad paste)
+
+```
+I could not read that as CNV intervals. Please send one interval, for example:
+chr12:25205246-25250929 DUP
+Free paragraphs are not parsed. Send /cancel to stop.
+```
+
 
 ## Saved / success caption
 

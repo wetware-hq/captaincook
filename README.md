@@ -64,7 +64,7 @@ Dummy sequence for documentation only: `MKTIIALSYIFCLVFA`.
 | `/app revoke` | Ends sharing of the current live view early. Markdown packet unchanged. |
 | `/board` | Alias of `/app` for one release. |
 | `/board update` | Alias of `/app` for one release. |
-| `/annotate` | NGS clinic paste: **BED / VCF-SV** (or `chr:start-end DEL|DUP`) with **GRCh38** (default) or **GRCh37** tagged; helper if assembly missing. ClassifyCNV ACMG/ClinGen breakdown → `clinic.md ## Chromosomal` + live `/app` **SEQ/TABLE** strip. Orthogonal bioscreen; refuse FASTA-as-chromosome / AA-invented DNA; **not a diagnosis**; Discord dark. |
+| `/annotate` | One-shot `/annotate chr12:25205246-25250929 DUP` (GRCh38 default); or arm then paste. BED/VCF-SV advanced. ClassifyCNV → clinic Chromosomal + `/app` SEQ↔TABLE. Card required. Not a diagnosis; Discord dark. |
 | `/variant <gene> <change>` | Peer-reviewed gene/variant brief (papers-first; not a diagnosis). |
 | `/trials` `[query]` | Public ClinicalTrials.gov shortlist (≤10); eligibility themes only; never enrolls. |
 

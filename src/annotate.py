@@ -35,35 +35,25 @@ DEFAULT_CLASSIFYCNV_TIMEOUT_SEC = 120
 
 # --- Locked TEMPLATE-annotate-cnv.md (verbatim) ---
 HELP_ONE_LINER = (
-    "/annotate — Paste CNV/SV intervals (BED, VCF-SV, or chr:start-end DEL|DUP) "
-    "with GRCh38 or GRCh37 tagged for ACMG/ClinGen-style annotation. Helper coaches "
-    "bad paste or missing assembly. Research use only; not a diagnosis. Runs after "
-    "the biosecurity screen when DNA/RNA is involved."
+    "/annotate — One-shot: `/annotate chr12:25205246-25250929 DUP` (GRCh38 default). "
+    "Or /annotate then paste coords or a sequence. BED/VCF-SV advanced. "
+    "Research use only; not a diagnosis."
 )
 
 MSG_ARMED = (
-    "Send chromosomal intervals in the next message, one per line. Examples:\n"
-    "chr17:43044295-43125483 DEL\n"
+    "Send one interval, for example:\n"
     "chr12:25205246-25250929 DUP\n"
-    "Or paste BED / VCF-SV lines.\n"
     "\n"
-    "Include the genome build when you can (GRCh38 preferred; GRCh37 accepted). Example:\n"
-    "##assembly=GRCh38\n"
-    "chr17:43044295-43125483 DEL\n"
-    "\n"
-    "Amino-acid sequences cannot be annotated as chromosomal CNVs here. "
+    "Or paste a DNA/RNA/AA sequence to store on the card (length + hash only in chat). "
+    "GRCh38 is the default for intervals (add ##assembly=GRCh37 only if needed). "
+    "BED / VCF-SV multi-line paste also works. "
     "Research use only; this is not a diagnosis. Send /cancel to stop."
 )
 
-MSG_MISSING_ASSEMBLY = (
-    "Please name the genome build (GRCh38 or GRCh37) on the first line, then your "
-    "BED or VCF-SV intervals. Chromosomal bars cannot be placed safely without a build."
-)
-
 MSG_FASTA_REFUSE = (
-    "FASTA or raw nucleotide sequence cannot be used as a chromosome path here. "
-    "Paste BED, VCF-SV, or chr:start-end DEL|DUP intervals with ##assembly=GRCh38 "
-    "(or GRCh37), not a sequence canvas."
+    "That looks like FASTA headers without clear intervals. "
+    "Use `/annotate chr12:25205246-25250929 DUP`, or paste plain sequence "
+    "(no `>` headers) to store length + hash on the card."
 )
 
 MSG_SAVED = (
@@ -73,11 +63,19 @@ MSG_SAVED = (
 )
 
 MSG_HELPER = (
-    "I could not read that as CNV intervals. Please send one interval per line, "
-    "for example:\n"
-    "chr17:43044295-43125483 DEL\n"
+    "I could not read that as CNV intervals. Please send one interval, for example:\n"
     "chr12:25205246-25250929 DUP\n"
-    "Or paste BED / VCF-SV. Free paragraphs are not parsed. Send /cancel to stop."
+    "Free paragraphs are not parsed. Send /cancel to stop."
+)
+
+MSG_SEQ_STORED = (
+    "Sequence stored on the card ({kind}, {n} residues; sha256 {hash12}…). "
+    "Not shown in full here. Research use only; not a diagnosis."
+)
+
+MSG_SEQ_BLOCK = (
+    "This request cannot proceed. The pre-compute biosecurity screen blocked "
+    "this sequence, so it was not stored on the card."
 )
 
 MSG_AA_ONLY = (
@@ -783,17 +781,76 @@ def get_cnv_public(user_data: dict[str, Any] | None) -> list[dict[str, Any]]:
     return []
 
 
+def extract_raw_sequence(text: str) -> tuple[str, str] | None:
+    """Return (compact_seq, kind) for AA/DNA/RNA paste; None if not a sequence.
+
+    Strips FASTA `>` headers. Never invents DNA from AA.
+    """
+    raw = text or ""
+    lines = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith(">"):
+            continue
+        if s.startswith("#") or s.upper().startswith("BROWSER") or s.upper().startswith("TRACK"):
+            continue
+        lines.append(s)
+    blob = "".join(lines) if lines else raw
+    compact = normalize_sequence(blob)
+    if len(compact) < 16:
+        return None
+    # Reject if it still looks like interval coords dominating
+    if parse_cnv_lines(raw):
+        return None
+    alph = classify_alphabet(compact)
+    if alph == "aa":
+        return compact, "aa"
+    if alph in ("dna", "rna"):
+        return compact, alph
+    # Ambiguous long ACGT-only
+    letters = set(compact.upper())
+    if letters <= set("ACGTU") and len(compact) >= 16:
+        return compact.upper(), "dna" if "U" not in letters else "rna"
+    return None
+
+
+def store_sequence_on_card(
+    user_data: dict[str, Any], seq: str, kind: str
+) -> tuple[str, str]:
+    """Store full sequence on card; return (kind_label, sha256_12). Never echo body."""
+    from .context_card import store_card
+
+    card = load_card(user_data)
+    if card is None:
+        raise RuntimeError("no card")
+    digest = hashlib.sha256(seq.encode("utf-8")).hexdigest()
+    card.sequence = seq
+    card.sequence_source = "user_paste"
+    prior = dict(card.last_run) if isinstance(card.last_run, dict) else {}
+    prior["kind"] = "annotate_sequence"
+    prior["sequence_meta"] = {
+        "kind": kind,
+        "length": len(seq),
+        "sha256": digest,
+        # never put full sequence in last_run public mirrors
+    }
+    card.last_run = prior
+    store_card(user_data, card)
+    return kind, digest[:12]
+
+
+
 def process_paste(
     user_data: dict[str, Any],
     text: str,
     *,
     genome_build: str = DEFAULT_GENOME_BUILD,
 ) -> tuple[str, list[CnvResult] | None, GateResult | None, str | None]:
-    """Parse → bioscreen → ClassifyCNV.
+    """Dual intake: coords → ClassifyCNV; raw sequence → secure card SEQUENCE.
 
     Returns (reply_or_brief, results|None, gate|None, status).
-    status: helper|aa|block|review|tool|ok|no_card
-    On helper/aa keeps or re-arms; on ok disarms.
+    status: helper|block|review|tool|ok|seq|no_card|fasta
+    Coords path disarms on ok; seq path disarms on seq; helper re-arms.
     """
     if load_card(user_data) is None:
         end_annotate(user_data)
@@ -804,50 +861,65 @@ def process_paste(
         user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
         return MSG_HELPER, None, None, "helper"
 
-    if looks_aa_only(raw):
-        end_annotate(user_data)
-        return MSG_AA_ONLY, None, None, "aa"
-
-    if looks_fasta_as_chromosome(raw):
-        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
-        return MSG_FASTA_REFUSE, None, None, "fasta"
-
     intervals = parse_cnv_lines(raw)
-    if not intervals:
-        # Pure prose / bad paste → helper + re-arm
+    if intervals:
+        build = extract_assembly(raw) or DEFAULT_GENOME_BUILD
+
+        gate_result = bioscreen_for_paste(raw)
+        if gate_result.decision is Decision.BLOCK:
+            end_annotate(user_data)
+            return MSG_COMMEC_BLOCK, None, gate_result, "block"
+        if gate_result.decision is Decision.REVIEW:
+            end_annotate(user_data)
+            from .bioscreen import refuse_message
+
+            return refuse_message(gate_result), None, gate_result, "review"
+
+        if not classifycnv_available():
+            end_annotate(user_data)
+            return MSG_TOOL_DOWN, None, gate_result, "tool"
+
+        try:
+            results = run_classifycnv(intervals, genome_build=build)
+        except RuntimeError:
+            end_annotate(user_data)
+            return MSG_TOOL_DOWN, None, gate_result, "tool"
+
+        brief = render_annotate_md(results, gate_result)
+        _stash_results_on_card(user_data, results, brief)
+        end_annotate(user_data)
+        return brief, results, gate_result, "ok"
+
+    # --- Raw sequence intake (no CNV invent) ---
+    extracted = extract_raw_sequence(raw)
+    if extracted is None:
+        # FASTA-looking with no usable body, or prose
+        if re.search(r"(?m)^>\S+", raw) and not normalize_sequence(
+            re.sub(r"(?m)^>.*$", "", raw)
+        ):
+            user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
+            return MSG_FASTA_REFUSE, None, None, "fasta"
         user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
         return MSG_HELPER, None, None, "helper"
 
-    build = extract_assembly(raw)
-    if build is None:
-        user_data[ANNOTATE_KEY] = {"armed_at": datetime.now(timezone.utc).isoformat()}
-        return MSG_MISSING_ASSEMBLY, None, None, "assembly"
+    seq, kind = extracted
+    gate_result: GateResult | None = None
+    if kind in ("dna", "rna"):
+        gate_result = gate(seq)
+        if gate_result.decision is Decision.BLOCK:
+            end_annotate(user_data)
+            return MSG_SEQ_BLOCK, None, gate_result, "block"
+        if gate_result.decision is Decision.REVIEW:
+            end_annotate(user_data)
+            from .bioscreen import refuse_message
 
-    gate_result = bioscreen_for_paste(raw)
-    if gate_result.decision is Decision.BLOCK:
-        end_annotate(user_data)
-        return MSG_COMMEC_BLOCK, None, gate_result, "block"
-    if gate_result.decision is Decision.REVIEW:
-        # No explicit human-proceed pattern for annotate → refuse (PASS only)
-        end_annotate(user_data)
-        from .bioscreen import refuse_message
-
-        return refuse_message(gate_result), None, gate_result, "review"
-
-    if not classifycnv_available():
-        end_annotate(user_data)
-        return MSG_TOOL_DOWN, None, gate_result, "tool"
-
-    try:
-        results = run_classifycnv(intervals, genome_build=build)
-    except RuntimeError:
-        end_annotate(user_data)
-        return MSG_TOOL_DOWN, None, gate_result, "tool"
-
-    brief = render_annotate_md(results, gate_result)
-    _stash_results_on_card(user_data, results, brief)
+            return refuse_message(gate_result), None, gate_result, "review"
+    # AA: store only — never reverse-translate, never invent CNVs
+    kind_label, hash12 = store_sequence_on_card(user_data, seq, kind)
     end_annotate(user_data)
-    return brief, results, gate_result, "ok"
+    msg = MSG_SEQ_STORED.format(kind=kind_label.upper(), n=len(seq), hash12=hash12)
+    return msg, None, gate_result, "seq"
+
 
 
 def success_caption(n: int) -> str:

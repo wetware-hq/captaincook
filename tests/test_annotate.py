@@ -55,6 +55,8 @@ class TestCopyLocked(unittest.TestCase):
     def test_helper_verbatim(self):
         self.assertIn("I could not read that as CNV intervals", annotate_mod.MSG_HELPER)
         self.assertIn("chr12:25205246-25250929 DUP", annotate_mod.MSG_HELPER)
+        self.assertNotIn("chr17:43044295-43125483 DEL", annotate_mod.MSG_HELPER)
+        self.assertIn("Free paragraphs are not parsed", annotate_mod.MSG_HELPER)
 
     def test_aa_refuse(self):
         self.assertIn("amino-acid sequence", annotate_mod.MSG_AA_ONLY)
@@ -92,13 +94,16 @@ class TestArmHelper(unittest.TestCase):
         self.assertTrue(annotate_mod.is_armed(ud))
         self.assertIsNone(results)
 
-    def test_aa_refuse_path(self):
+    def test_aa_stores_sequence(self):
         ud: dict = {}
         store_card(ud, ContextCard(raw_text="test", sequence="MKTAYIAKQR"))
         aa = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVKLD"
         reply, results, gate, status = annotate_mod.process_paste(ud, aa)
-        self.assertEqual(status, "aa")
-        self.assertEqual(reply, annotate_mod.MSG_AA_ONLY)
+        self.assertEqual(status, "seq")
+        self.assertIsNone(results)
+        self.assertIn("sha256", reply.lower())
+        from src.context_card import load_card
+        self.assertEqual(load_card(ud).sequence, aa)
 
 
 @unittest.skipUnless(annotate_mod.classifycnv_available(), "ClassifyCNV/bedtools missing")
@@ -233,27 +238,38 @@ class TestAssembly(unittest.TestCase):
             "hg19",
         )
 
-    def test_missing_assembly_helper(self):
-        ud = {"context_card": None}
+    def test_default_grch38_without_tag(self):
+        """Missing ##assembly defaults to hg38 (GRCh38)."""
+        ud = {}
         from src.context_card import ContextCard, store_card
         store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
         annotate_mod.start_annotate(ud)
         reply, results, gate, status = annotate_mod.process_paste(
             ud, "chr12:25205246-25250929 DUP"
         )
-        self.assertEqual(status, "assembly")
-        self.assertIn("genome build", reply)
-        self.assertTrue(annotate_mod.is_armed(ud))
+        self.assertEqual(status, "ok")
+        self.assertIsNotNone(results)
+        self.assertFalse(annotate_mod.is_armed(ud))
 
-    def test_fasta_refuse(self):
+    def test_aa_fasta_stores_not_cnv(self):
+        ud = {}
+        from src.context_card import ContextCard, store_card, load_card
+        store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
+        annotate_mod.start_annotate(ud)
+        aa = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVKLD"
+        fasta = ">prot\n" + aa
+        reply, results, gate, status = annotate_mod.process_paste(ud, fasta)
+        self.assertEqual(status, "seq")
+        self.assertEqual(load_card(ud).sequence, aa)
+        self.assertIn("sha256", reply.lower())
+
+    def test_fasta_header_only_refuse(self):
         ud = {}
         from src.context_card import ContextCard, store_card
         store_card(ud, ContextCard(raw_text="t", sequence="MKTAYIAKQR"))
         annotate_mod.start_annotate(ud)
-        fasta = ">chr12\n" + ("ACGT" * 40)
-        reply, results, gate, status = annotate_mod.process_paste(ud, fasta)
-        self.assertEqual(status, "fasta")
-        self.assertIn("FASTA", reply)
+        reply, results, gate, status = annotate_mod.process_paste(ud, ">chr12\n")
+        self.assertIn(status, ("fasta", "helper"))
 
 
 class TestSeqTableToggle(unittest.TestCase):

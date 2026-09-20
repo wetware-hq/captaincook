@@ -33,6 +33,49 @@ Observable, interpretable layer for **clinical biosecurity / chromosomal interpr
 | Viz | Simple chromosomal **feature tracks** (interval lanes, zoomable in HTML app) — Benchling-like readability, not dense coordinate dumps in chat |
 | Out of v1 | Full genome browser / Benchling editor clone inside Telegram |
 
+
+
+
+## Third intake — NGS file upload (locked 2026-09-20 — user)
+
+| Accept | Refuse (v1) |
+| --- | --- |
+| Telegram **document** after `/annotate` (or `/annotate` + file) | Opaque **BAM/CRAM** |
+| **FASTA**, **FASTQ** (hard size cap / first-N reads), **VCF/VCF-SV**, **BED** | Oversize without helper refuse |
+
+**Routing**
+- VCF-SV / BED → Chromosomal / ACMG path (assembly from VCF header if present; else GRCh38 + helper)  
+- FASTA / FASTQ → raw SEQUENCE on card (alphabet + `commec` for DNA/RNA)  
+
+**Security:** body on card only; chat/`/app` = format + length/interval count + hash; never Discord; never echo sequence bodies.
+
+## Intakes + card SEQUENCE (locked 2026-09-20 — user)
+
+Paste **coords, raw sequence, or upload a file** into `/annotate` (after `/load`); both link to the current card beside patient data.
+
+| Intake | Pipeline | Card / store |
+| --- | --- | --- |
+| **Coords** (BED/VCF-SV / `chr:… DEL\|DUP`) | Default GRCh38 → ClassifyCNV → Chromosomal | `clinic.md ## Chromosomal` + `cnv:` |
+| **Raw sequence** | Alphabet gate → DNA/RNA `commec`; AA store only | Card **SEQUENCE attribute** (secure) |
+
+**Secure SEQUENCE attribute**
+- Full body on card only (session/patient-adjacent, like secrets policy)  
+- Telegram / `/app`: **length + hash** only — never echo full seq  
+- Never Discord; never LM-dump the body  
+- Never invent CNVs from raw seq; never reverse-translate AA for `commec`/CNV  
+
+Helper: one coords example; bioscreen strings on alphabet/DNA refuse.
+
+## Paste UX simplify (locked 2026-09-20 — user)
+
+| Rule | Lock |
+| --- | --- |
+| Default assembly | **GRCh38** (tag only if not GRCh38) |
+| One-shot | `/annotate chr12:25205246-25250929 DUP` — no second message required |
+| Helper | **One** example line only + “Free paragraphs are not parsed” + `/cancel` |
+| Advanced | BED / VCF-SV still accepted as multi-line paste |
+| Card | Still required in this ship (minimal shell = later) |
+
 ## Commands
 
 | Command | Behavior |
